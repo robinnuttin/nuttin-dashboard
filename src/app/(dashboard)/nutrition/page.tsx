@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/input'
 import { useNutritionStore } from '@/stores/app-store'
 import { formatTime, getTodayString, isTrainingDay } from '@/lib/utils'
-import type { FoodLog, MealType } from '@/types'
+import type { FoodEntry } from '@/stores/app-store'
+import type { MealType } from '@/types'
 
 const DAILY_GOALS = {
   calories: 2700,
@@ -75,15 +76,11 @@ function MacroRing({ value, goal, color, label, unit = 'g' }: {
 }
 
 // ─── AI Food Logger ───────────────────────────────────────────
-function AIFoodLogger({ onLog }: { onLog: (log: FoodLog) => void }) {
+function AIFoodLogger({ onLog }: { onLog: (entry: FoodEntry) => void }) {
   const [input, setInput] = useState('')
   const [meal, setMeal] = useState<MealType>('breakfast')
   const [loading, setLoading] = useState(false)
-  const [result, setResult] = useState<Partial<FoodLog> | null>(null)
-
-  const EXAMPLE_RESPONSES: Record<string, Partial<FoodLog>> = {
-    default: { calories: 420, protein_g: 32, carbs_g: 38, fat_g: 14, fiber_g: 4 },
-  }
+  const [result, setResult] = useState<Partial<FoodEntry> | null>(null)
 
   const analyzeFood = async () => {
     if (!input.trim()) return
@@ -99,7 +96,6 @@ function AIFoodLogger({ onLog }: { onLog: (log: FoodLog) => void }) {
         const data = await res.json()
         setResult(data)
       } else {
-        // Fallback estimate
         const words = input.split(' ').length
         setResult({
           calories: words * 80 + Math.floor(Math.random() * 200),
@@ -110,26 +106,24 @@ function AIFoodLogger({ onLog }: { onLog: (log: FoodLog) => void }) {
         })
       }
     } catch {
-      setResult(EXAMPLE_RESPONSES.default)
+      setResult({ calories: 420, protein_g: 32, carbs_g: 38, fat_g: 14, fiber_g: 4 })
     }
     setLoading(false)
   }
 
   const confirmLog = () => {
     if (!result) return
-    const log: FoodLog = {
+    const entry: FoodEntry = {
       id: Date.now().toString(),
-      date: getTodayString(),
-      meal_type: meal,
-      description: input,
+      time: MEAL_TIMES[meal],
+      description: `[${MEAL_LABELS[meal]}] ${input}`,
       calories: result.calories || 0,
       protein_g: result.protein_g || 0,
       carbs_g: result.carbs_g || 0,
       fat_g: result.fat_g || 0,
       fiber_g: result.fiber_g || 0,
-      logged_at: new Date().toISOString(),
     }
-    onLog(log)
+    onLog(entry)
     setInput('')
     setResult(null)
   }
@@ -205,8 +199,10 @@ function AIFoodLogger({ onLog }: { onLog: (log: FoodLog) => void }) {
 
 // ─── Daily Nutrition Overview ─────────────────────────────────
 function DailyNutritionOverview() {
-  const { todayLogs, getTotals, removeFoodLog } = useNutritionStore()
-  const totals = getTotals()
+  const { getEntries, getTotals, removeEntry } = useNutritionStore()
+  const today = getTodayString()
+  const todayLogs = getEntries(today)
+  const totals = getTotals(today)
 
   return (
     <Card padding="md">
@@ -251,7 +247,7 @@ function DailyNutritionOverview() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
           {todayLogs.map((log) => (
             <div key={log.id} style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-              <Badge variant="muted">{MEAL_LABELS[log.meal_type]}</Badge>
+              <Badge variant="muted">{log.time}</Badge>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontSize: '13px', color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {log.description}
@@ -264,7 +260,7 @@ function DailyNutritionOverview() {
                 <div style={{ fontSize: '13px', fontWeight: 600, fontFamily: 'var(--font-mono)' }}>{log.calories} kcal</div>
               </div>
               <button
-                onClick={() => removeFoodLog(log.id)}
+                onClick={() => removeEntry(today, log.id)}
                 style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '2px' }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -345,7 +341,8 @@ function MealPlanSuggestions() {
 
 // ─── Main Nutrition Page ──────────────────────────────────────
 export default function NutritionPage() {
-  const { addFoodLog } = useNutritionStore()
+  const { addEntry } = useNutritionStore()
+  const today = getTodayString()
 
   return (
     <div className="animate-fade-in">
@@ -357,7 +354,7 @@ export default function NutritionPage() {
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <AIFoodLogger onLog={addFoodLog} />
+          <AIFoodLogger onLog={(entry) => addEntry(today, entry)} />
           <DailyNutritionOverview />
         </div>
         <div>

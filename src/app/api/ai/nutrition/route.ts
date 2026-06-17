@@ -6,13 +6,14 @@ Geef ALLEEN een JSON object terug zonder extra tekst.
 Formaat: {"calories": nummer, "protein_g": nummer, "carbs_g": nummer, "fat_g": nummer, "fiber_g": nummer}
 Wees realistisch — geen ronde getallen, gebruik decimalen waar nodig.`
 
-// ─── Model fallback chain (gratis, van sterk naar licht) ──────────
+// ─── Model fallback chain (alleen gratis modellen) ──────────────
 const MODELS = [
   'google/gemma-4-31b-it:free',
+  'deepseek/deepseek-chat-v3-0324:free',
+  'meta-llama/llama-4-maverick:free',
+  'qwen/qwen3-235b-a22b:free',
   'google/gemma-4-26b-a4b-it:free',
-  'nex-agi/nex-n2-pro:free',
-  'qwen/qwen3-coder:free',
-  'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
   'meta-llama/llama-3.1-8b-instruct:free',
 ]
 

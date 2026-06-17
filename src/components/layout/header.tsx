@@ -1,44 +1,58 @@
 'use client'
 import { getDayOfWeek, formatDate } from '@/lib/utils'
+import { usePathname } from 'next/navigation'
 
 interface HeaderProps {
   onMenuClick: () => void
-  title?: string
 }
 
-export function Header({ onMenuClick, title }: HeaderProps) {
+const pageTitles: Record<string, string> = {
+  '/': 'Vandaag',
+  '/daily': 'Checklist',
+  '/agenda': 'Agenda',
+  '/training': 'Training',
+  '/nutrition': 'Voeding',
+  '/health': 'Gezondheid',
+  '/financial': 'Financieel',
+  '/coach': 'AI Coach',
+  '/journal': 'Journal',
+  '/settings': 'Instellingen',
+}
+
+export function Header({ onMenuClick }: HeaderProps) {
+  const pathname = usePathname()
   const today = new Date()
   const day = getDayOfWeek()
   const date = formatDate(today)
+  const title = pageTitles[pathname] || ''
 
   return (
     <header
       style={{
-        height: 'var(--header-height)',
+        height: 'var(--header-h)',
         borderBottom: '1px solid var(--border)',
         display: 'flex',
         alignItems: 'center',
-        padding: '0 16px',
+        padding: '0 20px',
         position: 'sticky',
         top: 0,
         background: 'var(--bg)',
         zIndex: 30,
         gap: '12px',
+        backdropFilter: 'blur(12px)',
       }}
     >
-      {/* Mobile menu button */}
+      {/* Mobile menu */}
       <button
         onClick={onMenuClick}
         className="md:hidden"
         style={{
-          background: 'none',
-          border: 'none',
-          cursor: 'pointer',
           color: 'var(--text-muted)',
-          padding: '4px',
+          padding: '6px',
           display: 'flex',
           alignItems: 'center',
           flexShrink: 0,
+          borderRadius: 'var(--radius-sm)',
         }}
         aria-label="Menu openen"
       >
@@ -49,21 +63,18 @@ export function Header({ onMenuClick, title }: HeaderProps) {
         </svg>
       </button>
 
-      {/* Title / breadcrumb */}
-      {title && (
-        <h1 style={{ fontSize: '14px', fontWeight: 500, color: 'var(--text-primary)' }}>
-          {title}
-        </h1>
-      )}
+      {/* Page title */}
+      <h1 style={{ fontSize: '14px', fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.01em' }}>
+        {title}
+      </h1>
 
       <div style={{ flex: 1 }} />
 
-      {/* Date info */}
-      <div style={{ textAlign: 'right' }}>
-        <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-primary)' }}>
-          {day}
-        </div>
-        <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{date}</div>
+      {/* Date */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <span style={{ fontSize: '13px', fontWeight: 500, color: 'var(--text-secondary)' }}>{day}</span>
+        <span style={{ width: '3px', height: '3px', borderRadius: '50%', background: 'var(--border-strong)' }} />
+        <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' }}>{date}</span>
       </div>
     </header>
   )

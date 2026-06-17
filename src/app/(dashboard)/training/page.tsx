@@ -1,320 +1,482 @@
 'use client'
 import { useState } from 'react'
-import { Card, CardTitle, CardHeader, CardDivider } from '@/components/ui/card'
+import { Card, CardTitle, CardDivider } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { getTodayWorkout, getDayOfWeek, getTodayString } from '@/lib/utils'
+import { Progress } from '@/components/ui/progress'
+import { useTrainingStore, type WorkoutLog, type WorkoutExercise, type MuscleGroup } from '@/stores/app-store'
 
-const WEEKLY_SCHEDULE = [
-  { day: 'Maandag', workout: 'Push', exercises: ['Bench Press', 'Incline Dumbbell Press', 'Lateral Raises', 'Tricep Dips', 'Cable Crossover'], muscles: 'Borst · Schouders · Triceps' },
-  { day: 'Dinsdag', workout: 'Pull', exercises: ['Deadlift', 'Pull-ups', 'Barbell Row', 'Face Pulls', 'Bicep Curls'], muscles: 'Rug · Biceps · Trapezius' },
-  { day: 'Woensdag', workout: 'Cardio', exercises: ['7-10 km lopen (Zone 2-3)'], muscles: 'Cardiovasculair' },
-  { day: 'Donderdag', workout: 'Legs', exercises: ['Squat', 'Romanian Deadlift', 'Leg Press', 'Bulgarian Split Squat', 'Leg Curl'], muscles: 'Quads · Hamstrings · Glutes' },
-  { day: 'Vrijdag', workout: 'Upper Body', exercises: ['Overhead Press', 'Weighted Pull-ups', 'Cable Row', 'Arnold Press', 'Skull Crushers'], muscles: 'Full upper body' },
-  { day: 'Zaterdag', workout: 'Cardio', exercises: ['4-5 km lopen OF Zone 2 cycling'], muscles: 'Cardiovasculair' },
-  { day: 'Zondag', workout: 'Rust', exercises: ['Wandelen (optioneel)', 'Stretching', 'Foam Rolling'], muscles: 'Herstel' },
+// ─── Constants ────────────────────────────────────────────────
+type Tab = 'vandaag' | 'log' | 'schema'
+type WorkoutType = 'Push' | 'Pull' | 'Legs' | 'Upper' | 'Cardio' | 'Rest' | 'Custom'
+type DayKey = 'mon' | 'tue' | 'wed' | 'thu' | 'fri' | 'sat' | 'sun'
+
+const DAYS: { key: DayKey; label: string }[] = [
+  { key: 'mon', label: 'Maandag' }, { key: 'tue', label: 'Dinsdag' },
+  { key: 'wed', label: 'Woensdag' }, { key: 'thu', label: 'Donderdag' },
+  { key: 'fri', label: 'Vrijdag' }, { key: 'sat', label: 'Zaterdag' },
+  { key: 'sun', label: 'Zondag' },
 ]
+const WORKOUT_TYPES: WorkoutType[] = ['Push', 'Pull', 'Legs', 'Upper', 'Cardio', 'Rest']
+const LOG_TYPES: WorkoutType[] = ['Push', 'Pull', 'Legs', 'Upper', 'Cardio', 'Custom']
 
-const WORKOUT_COLORS: Record<string, string> = {
-  Push: 'blue',
-  Pull: 'purple',
-  Cardio: 'orange',
-  Legs: 'green',
-  'Upper Body': 'yellow',
-  Rust: 'muted',
+const ALL_MUSCLES: MuscleGroup[] = ['chest','back','shoulders','biceps','triceps','legs','glutes','core','cardio']
+const MUSCLE_NL: Record<MuscleGroup, string> = {
+  chest: 'Chest', back: 'Back', shoulders: 'Shoulders', biceps: 'Biceps',
+  triceps: 'Triceps', legs: 'Legs', glutes: 'Glutes', core: 'Core', cardio: 'Cardio',
+}
+const SESSION_MUSCLES: Record<string, MuscleGroup[]> = {
+  Push: ['chest','shoulders','triceps'], Pull: ['back','biceps','shoulders'],
+  Legs: ['legs','glutes','core'], Upper: ['chest','back','shoulders','biceps','triceps'],
+  Cardio: ['cardio','legs'],
+}
+const EXERCISE_PRESETS: Record<string, { name: string; muscleGroups: MuscleGroup[] }[]> = {
+  Push: [{ name: 'Bench Press', muscleGroups: ['chest','triceps','shoulders'] }, { name: 'Overhead Press', muscleGroups: ['shoulders','triceps'] }, { name: 'Dips', muscleGroups: ['chest','triceps'] }],
+  Pull: [{ name: 'Pull-ups', muscleGroups: ['back','biceps'] }, { name: 'Barbell Row', muscleGroups: ['back','biceps'] }, { name: 'Face Pulls', muscleGroups: ['shoulders','back'] }],
+  Legs: [{ name: 'Squat', muscleGroups: ['legs','glutes'] }, { name: 'Romanian Deadlift', muscleGroups: ['legs','glutes'] }, { name: 'Leg Press', muscleGroups: ['legs'] }],
+  Upper: [{ name: 'Bench Press', muscleGroups: ['chest','triceps'] }, { name: 'Barbell Row', muscleGroups: ['back','biceps'] }, { name: 'Overhead Press', muscleGroups: ['shoulders','triceps'] }],
+  Cardio: [{ name: 'Lopen', muscleGroups: ['cardio'] }],
 }
 
-// ─── Weekly Schedule ──────────────────────────────────────────
-function WeeklySchedule() {
-  const todayWorkout = getTodayWorkout()
-  const todayDay = getDayOfWeek()
+// ─── Local form type ──────────────────────────────────────────
+interface ExerciseRow {
+  id: string; name: string; muscleGroups: MuscleGroup[]
+  sets: { weight: string; reps: string }[]
+}
+
+function mkId() { return Date.now().toString() + Math.random().toString(36).slice(2) }
+function mkExercise(name = '', muscleGroups: MuscleGroup[] = []): ExerciseRow {
+  return { id: mkId(), name, muscleGroups, sets: [{ weight: '', reps: '' }] }
+}
+function presetsForType(type: WorkoutType): ExerciseRow[] {
+  const presets = EXERCISE_PRESETS[type]
+  return presets ? presets.map((p) => mkExercise(p.name, p.muscleGroups)) : [mkExercise()]
+}
+
+function todayDayKey(): DayKey {
+  return (['sun','mon','tue','wed','thu','fri','sat'] as DayKey[])[new Date().getDay()]
+}
+function isSaunaDay() { const d = new Date().getDay(); return d === 2 || d === 4 || d === 0 }
+
+// Recovery color
+function recoveryColor(days: number | null) {
+  if (days === null) return 'var(--text-muted)'
+  if (days < 2) return 'var(--accent-red-text)'
+  if (days < 4) return 'var(--accent-yellow-text)'
+  return 'var(--accent-green-text)'
+}
+function recoveryLabel(days: number | null) {
+  if (days === null) return 'Nooit'
+  if (days === 0) return 'Vandaag'
+  if (days === 1) return '1 dag'
+  return `${days}d`
+}
+
+// ─── Tab bar ──────────────────────────────────────────────────
+function TabBar({ active, onChange }: { active: Tab; onChange: (t: Tab) => void }) {
+  const tabs: { key: Tab; label: string }[] = [
+    { key: 'vandaag', label: 'Vandaag' },
+    { key: 'log', label: 'Log Workout' },
+    { key: 'schema', label: 'Schema' },
+  ]
+  return (
+    <div style={{ display: 'flex', gap: '4px', marginBottom: '16px', borderBottom: '1px solid var(--border)' }}>
+      {tabs.map((t) => (
+        <button key={t.key} onClick={() => onChange(t.key)} style={{
+          padding: '8px 14px', fontSize: '13px',
+          fontWeight: active === t.key ? 500 : 400,
+          color: active === t.key ? 'var(--text-primary)' : 'var(--text-muted)',
+          background: 'none', border: 'none',
+          borderBottom: `2px solid ${active === t.key ? 'var(--text-primary)' : 'transparent'}`,
+          cursor: 'pointer', marginBottom: '-1px', transition: 'color 0.15s ease',
+        }}>{t.label}</button>
+      ))}
+    </div>
+  )
+}
+
+// ─── Vandaag Tab ──────────────────────────────────────────────
+function VandaagTab() {
+  const getLastWorked = useTrainingStore((s) => s.getLastWorked)
+  const plan = useTrainingStore((s) => s.plan)
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiResponse, setAiResponse] = useState<string | null>(null)
+
+  const today = todayDayKey()
+  const todayType = plan[today] || 'Rest'
+  const muscles = SESSION_MUSCLES[todayType] || []
+  const sauna = isSaunaDay()
+
+  const lastWorked = getLastWorked()
+  const recovery = ALL_MUSCLES.map((m) => {
+    const last = lastWorked[m]
+    const days = last ? Math.floor((Date.now() - new Date(last).getTime()) / 86400000) : null
+    return { muscle: m, days }
+  })
+
+  const askAI = async () => {
+    setAiLoading(true)
+    setAiResponse(null)
+    const ctx = recovery.map((r) => `${MUSCLE_NL[r.muscle]}: ${recoveryLabel(r.days)}`).join(', ')
+    try {
+      const res = await fetch('/api/ai/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: `Vandaag is een ${todayType} dag. Herstelstatus spieren: ${ctx}. Geef concrete, bondige oefensuggesties in het Nederlands.` }),
+      })
+      const data = await res.json()
+      setAiResponse(data.response || data.message || 'Geen antwoord ontvangen.')
+    } catch { setAiResponse('Fout bij AI verbinding.') }
+    setAiLoading(false)
+  }
 
   return (
-    <Card padding="md">
-      <CardTitle>Weekschema</CardTitle>
-      <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-        {WEEKLY_SCHEDULE.map((d) => {
-          const isToday = d.day === todayDay
-          return (
-            <div
-              key={d.day}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-                padding: '10px',
-                borderRadius: 'var(--radius-sm)',
-                background: isToday ? 'var(--bg-hover)' : 'transparent',
-                border: `1px solid ${isToday ? 'var(--border-strong)' : 'transparent'}`,
-              }}
-            >
-              <div style={{ width: '80px', fontSize: '12px', fontWeight: isToday ? 600 : 400, color: isToday ? 'var(--text-primary)' : 'var(--text-muted)', flexShrink: 0 }}>
-                {d.day}
-              </div>
-              <Badge variant={WORKOUT_COLORS[d.workout] as 'blue' | 'purple' | 'orange' | 'green' | 'yellow' | 'muted'}>
-                {d.workout}
-              </Badge>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', flex: 1 }}>{d.muscles}</div>
-              {isToday && <span style={{ fontSize: '11px', color: 'var(--accent-green-text)', fontWeight: 500 }}>Vandaag</span>}
-            </div>
-          )
-        })}
-      </div>
-    </Card>
-  )
-}
-
-// ─── Today's Workout Logger ───────────────────────────────────
-interface SetLog {
-  exercise: string
-  sets: { weight: string; reps: string; done: boolean }[]
-}
-
-function WorkoutLogger() {
-  const todayWorkout = getTodayWorkout()
-  const todaySchedule = WEEKLY_SCHEDULE.find((d) => d.day === getDayOfWeek())
-  const [started, setStarted] = useState(false)
-  const [sets, setSets] = useState<SetLog[]>(
-    (todaySchedule?.exercises || []).map((ex) => ({
-      exercise: ex,
-      sets: [
-        { weight: '', reps: '', done: false },
-        { weight: '', reps: '', done: false },
-        { weight: '', reps: '', done: false },
-        { weight: '', reps: '', done: false },
-      ],
-    }))
-  )
-  const [timer, setTimer] = useState(0)
-
-  const isCardio = todayWorkout === 'Cardio'
-  const isRest = todayWorkout === 'Rust'
-
-  const completedSets = sets.flatMap((s) => s.sets).filter((s) => s.done).length
-  const totalSets = sets.flatMap((s) => s.sets).length
-
-  const toggleSet = (exIdx: number, setIdx: number) => {
-    setSets((prev) =>
-      prev.map((ex, i) =>
-        i === exIdx
-          ? {
-              ...ex,
-              sets: ex.sets.map((s, j) =>
-                j === setIdx ? { ...s, done: !s.done } : s
-              ),
-            }
-          : ex
-      )
-    )
-  }
-
-  const updateSet = (exIdx: number, setIdx: number, field: 'weight' | 'reps', val: string) => {
-    setSets((prev) =>
-      prev.map((ex, i) =>
-        i === exIdx
-          ? { ...ex, sets: ex.sets.map((s, j) => (j === setIdx ? { ...s, [field]: val } : s)) }
-          : ex
-      )
-    )
-  }
-
-  if (isRest) {
-    return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {/* Today card */}
       <Card padding="md">
-        <div style={{ textAlign: 'center', padding: '24px 0' }}>
-          <div style={{ fontSize: '32px', marginBottom: '8px' }}>
-            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ display: 'inline' }}>
-              <path d="M18 8h1a4 4 0 0 1 0 8h-1" /><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z" />
-            </svg>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+          <div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '4px' }}>Vandaag</div>
+            <div style={{ fontSize: '28px', fontWeight: 800, letterSpacing: '-0.03em', lineHeight: 1 }}>{todayType}</div>
           </div>
-          <div style={{ fontSize: '18px', fontWeight: 600, marginBottom: '6px' }}>Rustdag</div>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>Focus op herstel, slaap en voeding.</div>
+          {sauna && <Badge variant="orange">Sauna dag</Badge>}
         </div>
+        {muscles.length > 0 && (
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {muscles.map((m) => <Badge key={m} variant="blue">{MUSCLE_NL[m]}</Badge>)}
+          </div>
+        )}
       </Card>
-    )
-  }
 
-  return (
-    <Card padding="md">
-      <CardHeader
-        action={
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {started && <span style={{ fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)' }}>{completedSets}/{totalSets} sets</span>}
-            <Button
-              size="sm"
-              variant={started ? 'secondary' : 'primary'}
-              onClick={() => setStarted(!started)}
-            >
-              {started ? 'Pauzeren' : 'Training starten'}
-            </Button>
-          </div>
-        }
-      >
-        <CardTitle subtitle={todaySchedule?.muscles}>{todayWorkout} — Vandaag</CardTitle>
-      </CardHeader>
-
-      {started && (
-        <>
-          <Progress value={completedSets} max={totalSets} height={3} color="var(--accent-green-text)" />
-          <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {sets.map((ex, exIdx) => (
-              <div key={ex.exercise}>
-                <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '8px', color: 'var(--text-primary)' }}>
-                  {ex.exercise}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  {ex.sets.map((s, setIdx) => (
-                    <div key={setIdx} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', width: '40px', fontFamily: 'var(--font-mono)' }}>
-                        Set {setIdx + 1}
-                      </span>
-                      <Input
-                        type="number"
-                        value={s.weight}
-                        onChange={(e) => updateSet(exIdx, setIdx, 'weight', e.target.value)}
-                        placeholder="kg"
-                        suffix="kg"
-                        style={{ width: '80px' }}
-                      />
-                      <Input
-                        type="number"
-                        value={s.reps}
-                        onChange={(e) => updateSet(exIdx, setIdx, 'reps', e.target.value)}
-                        placeholder="reps"
-                        suffix="×"
-                        style={{ width: '80px' }}
-                      />
-                      <div
-                        onClick={() => toggleSet(exIdx, setIdx)}
-                        style={{
-                          width: '28px', height: '28px', borderRadius: 'var(--radius-sm)',
-                          border: `1.5px solid ${s.done ? 'var(--accent-green-text)' : 'var(--border)'}`,
-                          background: s.done ? 'var(--accent-green-bg)' : 'transparent',
-                          cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                          transition: 'all 0.15s ease',
-                        }}
-                      >
-                        {s.done && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green-text)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+      {/* Muscle recovery grid */}
+      <Card padding="md">
+        <CardTitle subtitle="Tijd sinds laatste training per spiergroep">Spierherstel</CardTitle>
+        <div style={{ marginTop: '12px', display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+          {recovery.map(({ muscle, days }) => {
+            const color = recoveryColor(days)
+            return (
+              <div key={muscle} style={{
+                textAlign: 'center', padding: '10px 6px', borderRadius: 'var(--radius-sm)',
+                background: 'var(--bg-secondary)', borderTop: `3px solid ${color}`,
+              }}>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '4px' }}>{MUSCLE_NL[muscle]}</div>
+                <div style={{ fontSize: '13px', fontWeight: 700, color }}>{recoveryLabel(days)}</div>
               </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      {!started && (
-        <div style={{ marginTop: '12px' }}>
-          <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '10px' }}>Oefeningen van vandaag:</div>
-          {todaySchedule?.exercises.map((ex, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-              <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', width: '20px' }}>{i + 1}</span>
-              <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>{ex}</span>
+            )
+          })}
+        </div>
+        <div style={{ display: 'flex', gap: '12px', marginTop: '10px', flexWrap: 'wrap' }}>
+          {[
+            { color: 'var(--accent-red-text)', label: '< 2 dagen' },
+            { color: 'var(--accent-yellow-text)', label: '2-3 dagen' },
+            { color: 'var(--accent-green-text)', label: '4+ dagen' },
+            { color: 'var(--text-muted)', label: 'Nooit' },
+          ].map((i) => (
+            <div key={i.label} style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: i.color, display: 'inline-block', flexShrink: 0 }} />
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{i.label}</span>
             </div>
           ))}
         </div>
-      )}
-    </Card>
-  )
-}
+      </Card>
 
-// ─── Cardio Tracker ───────────────────────────────────────────
-function CardioTracker() {
-  const cardioData = [
-    { date: '12 jun', type: 'long_run', distance: 8.2, duration: 52, hr: 155 },
-    { date: '10 jun', type: 'short_run', distance: 4.5, duration: 26, hr: 162 },
-    { date: '7 jun', type: 'long_run', distance: 7.8, duration: 48, hr: 158 },
-    { date: '5 jun', type: 'zone2', distance: 5, duration: 35, hr: 140 },
-  ]
-  const weeklyKm = cardioData.slice(0, 2).reduce((s, d) => s + d.distance, 0)
-
-  return (
-    <Card padding="md">
-      <CardHeader action={<Badge variant="orange">{weeklyKm.toFixed(1)} km deze week</Badge>}>
-        <CardTitle subtitle="3x per week cardio">Cardio</CardTitle>
-      </CardHeader>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '14px' }}>
-        {[
-          { label: 'Lange run', sub: '7-10 km (woe)', color: 'var(--accent-blue-text)' },
-          { label: 'Korte run', sub: '4-5 km (zat)', color: 'var(--accent-green-text)' },
-          { label: 'Zone 2', sub: 'Extra cardio', color: 'var(--accent-yellow-text)' },
-        ].map((c) => (
-          <div key={c.label} style={{ padding: '10px', background: 'var(--bg-secondary)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '12px', fontWeight: 500, color: c.color }}>{c.label}</div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>{c.sub}</div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>Recente sessies</div>
-      {cardioData.map((d, i) => (
-        <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: '13px', fontWeight: 500 }}>
-              {d.type === 'long_run' ? 'Lange run' : d.type === 'short_run' ? 'Korte run' : 'Zone 2'}
+      {/* AI suggest */}
+      <Card padding="md">
+        <CardTitle subtitle="Gepersonaliseerde suggestie op basis van herstel">AI Coach</CardTitle>
+        <div style={{ marginTop: '10px' }}>
+          <Button variant="secondary" size="md" onClick={askAI} disabled={aiLoading}>
+            {aiLoading ? 'AI denkt na...' : 'Suggestie voor vandaag'}
+          </Button>
+          {aiResponse && (
+            <div className="animate-fade-in" style={{ marginTop: '12px', fontSize: '13px', lineHeight: 1.7, color: 'var(--text-secondary)', whiteSpace: 'pre-wrap', borderTop: '1px solid var(--border)', paddingTop: '12px' }}>
+              {aiResponse}
             </div>
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>{d.date}</div>
-          </div>
-          <div style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{d.distance} km</div>
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{d.duration} min</div>
-          <div style={{ fontSize: '12px', color: 'var(--accent-red-text)' }}>{d.hr} bpm</div>
+          )}
         </div>
-      ))}
-    </Card>
+      </Card>
+    </div>
   )
 }
 
-// ─── Progressive Overload ─────────────────────────────────────
-function ProgressiveOverload() {
-  const exercises = [
-    { name: 'Bench Press', lastWeight: 82.5, lastReps: 8, trend: '+2.5kg' },
-    { name: 'Squat', lastWeight: 100, lastReps: 6, trend: '+5kg' },
-    { name: 'Deadlift', lastWeight: 120, lastReps: 5, trend: '+2.5kg' },
-    { name: 'Overhead Press', lastWeight: 55, lastReps: 8, trend: '+2.5kg' },
-    { name: 'Pull-ups', lastWeight: 0, lastReps: 10, trend: '+2 reps' },
-  ]
-
+// ─── Exercise Card ────────────────────────────────────────────
+function ExerciseCard({
+  ex, onNameChange, onToggleMuscle, onAddSet, onRemoveSet, onSetChange, onRemove, canRemove,
+}: {
+  ex: ExerciseRow
+  onNameChange: (v: string) => void
+  onToggleMuscle: (m: MuscleGroup) => void
+  onAddSet: () => void
+  onRemoveSet: (i: number) => void
+  onSetChange: (i: number, field: 'weight' | 'reps', v: string) => void
+  onRemove: () => void
+  canRemove: boolean
+}) {
   return (
-    <Card padding="md">
-      <CardTitle subtitle="Progressive overload tracking">Krachtontwikkeling</CardTitle>
-      <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-        {exercises.map((ex) => (
-          <div key={ex.name} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ flex: 1, fontSize: '13px', fontWeight: 500 }}>{ex.name}</div>
-            <div style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)' }}>
-              {ex.lastWeight > 0 ? `${ex.lastWeight}kg` : 'BW'} × {ex.lastReps}
-            </div>
-            <Badge variant="green">{ex.trend}</Badge>
+    <div style={{ background: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)', padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <input
+          type="text" value={ex.name} placeholder="Oefening naam"
+          onChange={(e) => onNameChange(e.target.value)}
+          style={{ flex: 1, background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontSize: '13px', padding: '8px 10px', outline: 'none' }}
+        />
+        {canRemove && (
+          <button onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-red-text)', fontSize: '18px', lineHeight: 1, padding: '4px' }}>×</button>
+        )}
+      </div>
+
+      {/* Muscle chips */}
+      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+        {ALL_MUSCLES.map((m) => {
+          const active = ex.muscleGroups.includes(m)
+          return (
+            <button key={m} onClick={() => onToggleMuscle(m)} style={{
+              padding: '2px 8px', borderRadius: '999px', border: `1px solid ${active ? 'var(--accent-blue-text)' : 'var(--border)'}`,
+              background: active ? 'var(--accent-blue-bg)' : 'transparent',
+              color: active ? 'var(--accent-blue-text)' : 'var(--text-muted)',
+              fontSize: '11px', fontWeight: active ? 600 : 400, cursor: 'pointer',
+            }}>{MUSCLE_NL[m]}</button>
+          )
+        })}
+      </div>
+
+      {/* Sets */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 24px', gap: '6px' }}>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Gewicht (kg)</div>
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Reps</div>
+          <div />
+        </div>
+        {ex.sets.map((set, i) => (
+          <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 24px', gap: '6px', alignItems: 'center' }}>
+            <input type="number" min="0" value={set.weight} placeholder="0" onChange={(e) => onSetChange(i, 'weight', e.target.value)}
+              style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontSize: '13px', padding: '6px 8px', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+            <input type="number" min="0" value={set.reps} placeholder="0" onChange={(e) => onSetChange(i, 'reps', e.target.value)}
+              style={{ background: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontSize: '13px', padding: '6px 8px', outline: 'none', width: '100%', boxSizing: 'border-box' }} />
+            <button onClick={() => onRemoveSet(i)} disabled={ex.sets.length <= 1} style={{ background: 'none', border: 'none', cursor: ex.sets.length <= 1 ? 'not-allowed' : 'pointer', color: ex.sets.length <= 1 ? 'var(--border)' : 'var(--accent-red-text)', fontSize: '16px', lineHeight: 1, padding: 0 }}>−</button>
           </div>
         ))}
+        <button onClick={onAddSet} style={{ padding: '5px', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '12px' }}>
+          + Set toevoegen
+        </button>
       </div>
-    </Card>
+    </div>
   )
 }
 
-// ─── Main Training Page ───────────────────────────────────────
+// ─── Log Tab ──────────────────────────────────────────────────
+function LogTab() {
+  const addLog = useTrainingStore((s) => s.addLog)
+  const logs = useTrainingStore((s) => s.logs)
+  const [workoutType, setWorkoutType] = useState<WorkoutType>('Push')
+  const [exercises, setExercises] = useState<ExerciseRow[]>(() => presetsForType('Push'))
+  const [durationMin, setDurationMin] = useState('')
+  const [notes, setNotes] = useState('')
+  const [saved, setSaved] = useState(false)
+
+  const changeType = (t: WorkoutType) => { setWorkoutType(t); setExercises(presetsForType(t)); setSaved(false) }
+  const addEx = () => setExercises((p) => [...p, mkExercise()])
+  const removeEx = (id: string) => setExercises((p) => p.filter((e) => e.id !== id))
+  const nameChange = (id: string, v: string) => setExercises((p) => p.map((e) => e.id === id ? { ...e, name: v } : e))
+  const toggleMuscle = (id: string, m: MuscleGroup) => setExercises((p) => p.map((e) => {
+    if (e.id !== id) return e
+    const has = e.muscleGroups.includes(m)
+    return { ...e, muscleGroups: has ? e.muscleGroups.filter((x) => x !== m) : [...e.muscleGroups, m] }
+  }))
+  const addSet = (id: string) => setExercises((p) => p.map((e) => e.id === id ? { ...e, sets: [...e.sets, { weight: '', reps: '' }] } : e))
+  const removeSet = (id: string, i: number) => setExercises((p) => p.map((e) => e.id === id ? { ...e, sets: e.sets.filter((_, j) => j !== i) } : e))
+  const setChange = (id: string, i: number, field: 'weight' | 'reps', v: string) => setExercises((p) => p.map((e) =>
+    e.id !== id ? e : { ...e, sets: e.sets.map((s, j) => j === i ? { ...s, [field]: v } : s) }
+  ))
+
+  const save = () => {
+    const exPayload: WorkoutExercise[] = exercises
+      .filter((e) => e.name.trim())
+      .map((e) => ({
+        name: e.name.trim(),
+        muscleGroups: e.muscleGroups,
+        sets: e.sets
+          .filter((s) => s.weight || s.reps)
+          .map((s) => ({ weight: parseFloat(s.weight) || 0, reps: parseInt(s.reps, 10) || 0, completed: true })),
+      }))
+    const log: WorkoutLog = {
+      id: Date.now().toString(),
+      date: new Date().toISOString().split('T')[0],
+      type: workoutType,
+      exercises: exPayload,
+      durationMin: parseInt(durationMin, 10) || undefined,
+      notes: notes.trim() || undefined,
+    }
+    addLog(log)
+    setSaved(true)
+    setNotes('')
+    setDurationMin('')
+    setTimeout(() => setSaved(false), 2500)
+  }
+
+  const recent = [...logs].sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      {/* Type selector */}
+      <Card padding="md">
+        <CardTitle>Type</CardTitle>
+        <div style={{ marginTop: '10px', display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {LOG_TYPES.map((t) => (
+            <button key={t} onClick={() => changeType(t)} style={{
+              padding: '6px 12px', borderRadius: '999px', border: `1px solid ${workoutType === t ? 'var(--text-primary)' : 'var(--border)'}`,
+              background: workoutType === t ? 'var(--text-primary)' : 'transparent',
+              color: workoutType === t ? 'var(--bg)' : 'var(--text-muted)',
+              fontSize: '12px', fontWeight: workoutType === t ? 600 : 400, cursor: 'pointer', transition: 'all 0.1s',
+            }}>{t}</button>
+          ))}
+        </div>
+      </Card>
+
+      {/* Exercises */}
+      <Card padding="md">
+        <CardTitle>Oefeningen</CardTitle>
+        <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {exercises.map((ex) => (
+            <ExerciseCard key={ex.id} ex={ex}
+              onNameChange={(v) => nameChange(ex.id, v)}
+              onToggleMuscle={(m) => toggleMuscle(ex.id, m)}
+              onAddSet={() => addSet(ex.id)}
+              onRemoveSet={(i) => removeSet(ex.id, i)}
+              onSetChange={(i, f, v) => setChange(ex.id, i, f, v)}
+              onRemove={() => removeEx(ex.id)}
+              canRemove={exercises.length > 1}
+            />
+          ))}
+          <button onClick={addEx} style={{ padding: '8px', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', background: 'transparent', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '13px' }}>
+            + Oefening toevoegen
+          </button>
+        </div>
+      </Card>
+
+      {/* Duration + Notes */}
+      <Card padding="md">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          <Input label="Duur (minuten)" type="number" value={durationMin} onChange={(e) => setDurationMin(e.target.value)} placeholder="45" />
+          <div>
+            <label style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px', display: 'block' }}>Notities</label>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} placeholder="Hoe was de training?"
+              style={{ width: '100%', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontSize: '13px', padding: '8px 10px', outline: 'none', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box' }} />
+          </div>
+          <Button variant={saved ? 'secondary' : 'primary'} size="md" onClick={save}>
+            {saved ? 'Opgeslagen!' : 'Workout opslaan'}
+          </Button>
+        </div>
+      </Card>
+
+      {/* Recent logs */}
+      {recent.length > 0 && (
+        <Card padding="md">
+          <CardTitle subtitle="Laatste 5 workouts">Recente workouts</CardTitle>
+          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {recent.map((log) => (
+              <div key={log.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600 }}>{log.type}</span>
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{log.date}{log.durationMin ? ` · ${log.durationMin} min` : ''}</span>
+                </div>
+                {log.exercises?.length > 0 && (
+                  <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                    {log.exercises.map((ex, i) => <Badge key={i} variant="muted">{ex.name}</Badge>)}
+                  </div>
+                )}
+                {log.notes && <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>{log.notes}</div>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+// ─── Schema Tab ───────────────────────────────────────────────
+function SchemaTab() {
+  const plan = useTrainingStore((s) => s.plan)
+  const setPlan = useTrainingStore((s) => s.setPlan)
+  const [local, setLocal] = useState<Record<DayKey, string>>(() => ({ ...plan }))
+  const [saved, setSaved] = useState(false)
+
+  const save = () => { setPlan(local as typeof plan); setSaved(true); setTimeout(() => setSaved(false), 2000) }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      <Card padding="md">
+        <CardTitle subtitle="Kies per dag je trainingstype">Weekschema</CardTitle>
+        <div style={{ marginTop: '14px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {DAYS.map(({ key, label }) => {
+            const type = local[key] || 'Rest'
+            const muscles = SESSION_MUSCLES[type] || []
+            return (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 0', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ minWidth: '90px', fontSize: '13px', fontWeight: 500 }}>{label}</div>
+                <select value={type} onChange={(e) => setLocal(l => ({ ...l, [key]: e.target.value }))}
+                  style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontSize: '13px', padding: '5px 8px', outline: 'none', cursor: 'pointer' }}>
+                  {WORKOUT_TYPES.map((wt) => <option key={wt} value={wt}>{wt}</option>)}
+                </select>
+                <div style={{ flex: 1, display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                  {muscles.map((m) => <Badge key={m} variant="muted">{MUSCLE_NL[m]}</Badge>)}
+                  {muscles.length === 0 && <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Rustdag</span>}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+        <div style={{ marginTop: '12px' }}>
+          <Button variant={saved ? 'secondary' : 'primary'} size="md" onClick={save}>
+            {saved ? 'Opgeslagen!' : 'Schema opslaan'}
+          </Button>
+        </div>
+      </Card>
+
+      {/* Volume progress per muscle */}
+      <Card padding="md">
+        <CardTitle subtitle="Sets per spiergroep deze week">Weekvolume</CardTitle>
+        <div style={{ marginTop: '12px' }}>
+          {(() => {
+            const weekStart = new Date(); weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1)
+            const weekStr = weekStart.toISOString().split('T')[0]
+            return null; weekStr; // placeholder
+          })()}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {ALL_MUSCLES.filter(m => m !== 'cardio').map((m) => {
+              // Count scheduled sessions this week targeting this muscle
+              const count = Object.values(local).filter((t) => (SESSION_MUSCLES[t] || []).includes(m)).length
+              return (
+                <div key={m}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '3px' }}>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>{MUSCLE_NL[m]}</span>
+                    <span style={{ fontSize: '12px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>{count}/3</span>
+                  </div>
+                  <Progress value={count} max={3} height={4} color={count >= 2 ? 'var(--accent-green-text)' : count === 1 ? 'var(--accent-yellow-text)' : 'var(--accent-red-text)'} />
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+// ─── Main ──────────────────────────────────────────────────────
 export default function TrainingPage() {
+  const [tab, setTab] = useState<Tab>('vandaag')
   return (
     <div className="animate-fade-in">
-      <div style={{ marginBottom: '24px' }}>
+      <div style={{ marginBottom: '20px' }}>
         <h1 style={{ fontSize: '22px', fontWeight: 700, letterSpacing: '-0.03em', marginBottom: '4px' }}>Training</h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Vandaag: <strong style={{ color: 'var(--text-primary)' }}>{getTodayWorkout()}</strong> — {getDayOfWeek()}</p>
+        <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Weekschema, workout log en AI suggesties</p>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <WorkoutLogger />
-          <CardioTracker />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <WeeklySchedule />
-          <ProgressiveOverload />
-        </div>
-      </div>
+      <TabBar active={tab} onChange={setTab} />
+      {tab === 'vandaag' && <VandaagTab />}
+      {tab === 'log' && <LogTab />}
+      {tab === 'schema' && <SchemaTab />}
     </div>
   )
 }

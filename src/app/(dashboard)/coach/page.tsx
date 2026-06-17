@@ -1,334 +1,353 @@
 'use client'
 import { useState, useRef, useEffect } from 'react'
-import { Card, CardTitle, CardDivider } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Textarea } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
-import type { ChatMessage } from '@/types'
+import { useCoachStore, useSupplementsStore, useTrainingStore, useDailyStore } from '@/stores/app-store'
+import type { CoachMessage } from '@/stores/app-store'
 
-const SYSTEM_CONTEXT = `Je bent een persoonlijke AI coach voor een 20-jarige man, 1m91, 87kg, vetpercentage ~19%.
+// ─── AI action types the coach can execute ────────────────────────
+type ActionType = 'supplement_toggle' | 'supplement_update' | 'training_plan' | 'priority_set' | 'note'
 
-Zijn doelen:
-- FINANCIEEL: 5-6 deals sluiten (websites/CRM à €3900 bruto, €2000 netto), review cards verkopen (€75/€175), doel €10.000 netto in 1-2 maanden
-- LICHAAM: Van 87kg naar 91-92kg bij 10-12% vetpercentage via bulk-recomp
-- TRAINING: Push/Pull/Legs/Upper/Cardio schema, 3x cardio per week
-- VOEDING: 2600-2800 kcal, 200-220g proteïne per dag
-- SLAAP: 8u slaap, in bed voor 23u, wakker 8u-8u30
-- SUPPLEMENTEN: Creatine 5g, Vit D, Magnesium, Zink, B12
-- GELOOF: 5 gebeden per dag
-- SCHERMTIJD: Gradueel afbouwen
-- BIJBAANTJE: 20u/week job zoeken als extra zekerheid
-
-Geef altijd bondige, directe, actionable adviezen in het Nederlands. Focus op de GROOTSTE hefboom die het meeste resultaat oplevert. Overwelm niet met informatie. Gebruik evidence-based aanbevelingen. Wees eerlijk en realistisch.`
-
-const INITIAL_MESSAGES: ChatMessage[] = [
-  {
-    role: 'assistant',
-    content: `Goed, laten we aan de slag gaan. Ik ben je persoonlijke coach.
-
-**Prioriteiten voor vandaag:**
-1. E-mailcampagne — je zit op 1.247 van 2.000 emails. Stuur er vandaag 100 bij.
-2. Proteïne — zorg dat je vandaag 200g+ haalt. Voeg kwark of kipfilet toe.
-3. Slaap — je slaapt gemiddeld 7.2u. Ga vanavond voor 23:00 naar bed.
-
-Wat wil je bespreken? Ik kan je helpen met business strategie, voeding, training, schermtijd, of algemene coaching.`,
-    timestamp: new Date().toISOString(),
-  },
-]
-
-// ─── Quick Actions ────────────────────────────────────────────
-const QUICK_ACTIONS = [
-  'Analyseer mijn dag',
-  'Wat moet ik vandaag eten?',
-  'Welke deals moet ik opvolgen?',
-  'Geef me een motivatie boost',
-  'Hoeveel review cards moet ik nog verkopen?',
-  'Beste volgende actie voor €10k doel?',
-]
-
-// ─── Message Bubble ───────────────────────────────────────────
-function MessageBubble({ msg }: { msg: ChatMessage }) {
-  const isUser = msg.role === 'user'
-
-  // Simple markdown-like rendering
-  const renderContent = (text: string) => {
-    const lines = text.split('\n')
-    return lines.map((line, i) => {
-      if (line.startsWith('**') && line.endsWith('**')) {
-        return <strong key={i} style={{ display: 'block', color: 'var(--text-primary)', marginTop: '4px' }}>{line.slice(2, -2)}</strong>
-      }
-      if (line.match(/^\d\./)) {
-        return <div key={i} style={{ paddingLeft: '4px', marginTop: '2px' }}>{line}</div>
-      }
-      if (line.startsWith('- ')) {
-        return <div key={i} style={{ paddingLeft: '8px', marginTop: '2px' }}>· {line.slice(2)}</div>
-      }
-      return <span key={i}>{line}{i < lines.length - 1 ? '\n' : ''}</span>
-    })
+function applyAction(
+  action: { type: ActionType; payload: Record<string, unknown> },
+  supplementStore: ReturnType<typeof useSupplementsStore.getState>,
+  trainingStore: ReturnType<typeof useTrainingStore.getState>,
+  dailyStore: ReturnType<typeof useDailyStore.getState>,
+  today: string
+) {
+  if (action.type === 'supplement_toggle' && action.payload.id) {
+    supplementStore.toggle(action.payload.id as string)
   }
+  if (action.type === 'supplement_update' && action.payload.id) {
+    supplementStore.update(action.payload.id as string, action.payload as Record<string, unknown> & { id: string })
+  }
+  if (action.type === 'training_plan' && action.payload.plan) {
+    trainingStore.setPlan(action.payload.plan as Parameters<typeof trainingStore.setPlan>[0])
+  }
+  if (action.type === 'priority_set' && action.payload.priorities) {
+    dailyStore.setPriorities(today, action.payload.priorities as string[])
+  }
+}
+
+// ─── Build system context ─────────────────────────────────────────
+function buildContext(
+  supplements: ReturnType<typeof useSupplementsStore.getState>,
+  training: ReturnType<typeof useTrainingStore.getState>,
+  daily: ReturnType<typeof useDailyStore.getState>,
+  today: string
+): string {
+  const supsActive = supplements.supplements.filter((s) => s.active).map((s) => `${s.name} ${s.dose} (${s.timing})`).join(', ')
+  const supsInactive = supplements.supplements.filter((s) => !s.active).map((s) => s.name).join(', ')
+  const plan = training.plan
+  const planStr = `ma:${plan.mon} di:${plan.tue} wo:${plan.wed} do:${plan.thu} vr:${plan.fri} za:${plan.sat} zo:${plan.sun}`
+  const rec = daily.records[today]
+  const prio = rec?.priorities?.join(', ') || 'geen'
+  const lastWorked = training.getLastWorked()
+  const muscleStr = Object.entries(lastWorked).map(([m, d]) => `${m}:${d ? d : 'nooit'}`).join(' ')
+
+  return `Je bent een persoonlijke AI coach voor Robin (Nuttin). Spreek Nederlands.
+
+PERSOONLIJK PROFIEL:
+- Doel: 87kg → 91-92kg, vetpercentage van 19% naar 10-12%
+- Caloriedoel: 2600-2800 kcal/dag, 200-220g proteïne
+- Gelovig moslim (5 gebeden/dag)
+- Financieel doel: €10.000 netto/maand
+- Locatie: Kortrijk, België
+
+ACTIEVE SUPPLEMENTEN: ${supsActive}
+INACTIEVE SUPPLEMENTEN: ${supsInactive}
+
+TRAININGSSCHEMA: ${planStr}
+SPIERHERSTEL (laatste training): ${muscleStr}
+
+VANDAAG (${today}):
+- Prioriteiten: ${prio}
+- Opgestaan op tijd: ${rec?.wokeOnTime ? 'ja' : 'nee'}
+- Supplementen genomen: ${rec?.supplementsTaken ? 'ja' : 'nee'}
+- Gebeden: ${rec?.prayersDone || 0}/5
+
+JE KUNT ACTIES UITVOEREN:
+Als de gebruiker wil dat je iets aanpast (supplement aan/uitzetten, trainingsschema wijzigen, prioriteiten instellen), antwoord dan normaal én voeg aan het einde van je bericht een JSON-blok toe:
+\`\`\`actions
+[{"type":"supplement_toggle","payload":{"id":"vitd"},"description":"Vitamine D3 uitgeschakeld"},...]
+\`\`\`
+
+Actietypes:
+- supplement_toggle: {"id": "supplement_id"}
+- supplement_update: {"id": "...", "dose": "...", "timing": "...", "active": true/false}
+- training_plan: {"plan": {"mon":"Push","tue":"Pull","wed":"Legs","thu":"Rest","fri":"Upper","sat":"Cardio","sun":"Rest"}}
+- priority_set: {"priorities": ["taak1","taak2","taak3"]}
+
+Supplement IDs: creatine, vitd, magnesium, zinc, b12, calcium, omega3
+
+Wees direct, to the point, eerlijk. Geen sugarcoating. Geef concrete acties.`
+}
+
+// ─── Parse actions from AI response ───────────────────────────────
+function parseActions(content: string): { type: ActionType; payload: Record<string, unknown>; description: string }[] {
+  const match = content.match(/```actions\s*([\s\S]*?)```/)
+  if (!match) return []
+  try {
+    return JSON.parse(match[1])
+  } catch {
+    return []
+  }
+}
+
+function stripActions(content: string): string {
+  return content.replace(/```actions[\s\S]*?```/g, '').trim()
+}
+
+// ─── Message bubble ───────────────────────────────────────────────
+function Bubble({ msg }: { msg: CoachMessage }) {
+  const isUser = msg.role === 'user'
+  const clean = stripActions(msg.content)
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        justifyContent: isUser ? 'flex-end' : 'flex-start',
-        marginBottom: '12px',
-      }}
-      className="animate-fade-in"
-    >
+    <div style={{
+      display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start',
+      marginBottom: '10px', gap: '8px', alignItems: 'flex-end',
+    }}>
       {!isUser && (
-        <div style={{
-          width: '28px', height: '28px', borderRadius: '50%',
-          background: 'var(--text-primary)', color: 'var(--bg)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontSize: '12px', fontWeight: 700, flexShrink: 0, marginRight: '8px', marginTop: '2px',
-        }}>
-          N
+        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent-blue-bg)', border: '1px solid var(--accent-blue-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, fontSize: 12, color: 'var(--accent-blue-text)', fontWeight: 700 }}>
+          AI
         </div>
       )}
-      <div
-        style={{
-          maxWidth: '80%',
-          padding: '10px 14px',
-          borderRadius: isUser ? '12px 12px 2px 12px' : '2px 12px 12px 12px',
-          background: isUser ? 'var(--text-primary)' : 'var(--bg-secondary)',
-          color: isUser ? 'var(--bg)' : 'var(--text-primary)',
-          border: isUser ? 'none' : '1px solid var(--border)',
-          fontSize: '13px',
-          lineHeight: 1.6,
-          whiteSpace: 'pre-line',
-        }}
-      >
-        {renderContent(msg.content)}
+      <div style={{
+        maxWidth: '78%', padding: '10px 14px',
+        borderRadius: isUser ? '14px 14px 4px 14px' : '4px 14px 14px 14px',
+        background: isUser ? 'var(--text-primary)' : 'var(--surface)',
+        color: isUser ? 'var(--text-inverse)' : 'var(--text-primary)',
+        border: isUser ? 'none' : '1px solid var(--border)',
+        fontSize: 14, lineHeight: 1.55, whiteSpace: 'pre-wrap',
+      }}>
+        {clean}
+        {msg.actions && msg.actions.length > 0 && (
+          <div style={{ marginTop: 10, paddingTop: 8, borderTop: `1px solid ${isUser ? 'rgba(255,255,255,0.2)' : 'var(--border)'}` }}>
+            {msg.actions.map((a, i) => (
+              <div key={i} style={{ fontSize: 12, color: isUser ? 'rgba(255,255,255,0.7)' : 'var(--accent-green-text)', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                {a.description}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-// ─── Daily Analysis ───────────────────────────────────────────
-function DailyAnalysis() {
-  const [loading, setLoading] = useState(false)
-  const [analysis, setAnalysis] = useState<{
-    good: string; improve: string; priority: string; score: number
-  } | null>(null)
+// ─── Quick actions ────────────────────────────────────────────────
+const QUICK_PROMPTS = [
+  'Wat zijn mijn 3 prioriteiten voor vandaag?',
+  'Welke spieren moet ik vandaag trainen?',
+  'Welke supplementen moet ik nu nemen?',
+  'Geef me een financieel advies',
+  'Hoe staat het met mijn doelen?',
+  'Zet Vitamine D3 uit',
+]
 
-  const generate = async () => {
-    setLoading(true)
-    await new Promise(r => setTimeout(r, 1500))
-    setAnalysis({
-      score: 74,
-      good: 'Je hebt 3 van de 5 gebeden gedaan en je proteïne is op 78% van het doel. De review card sessie gisteren leverde €250 op.',
-      improve: 'Je slaap was gisteren maar 6.5 uur — dit remt spierherstel en testosteron. Ook de e-mailcampagne stagneert: 0 emails gisteren.',
-      priority: 'Stuur vandaag minimum 80 e-mails én ga voor 23:00 naar bed. Dit heeft meer impact dan extra training.',
-    })
-    setLoading(false)
-  }
-
-  return (
-    <Card padding="md">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-        <CardTitle subtitle="AI analyse van jouw dag">Dagelijkse Review</CardTitle>
-        <Button size="sm" variant="secondary" loading={loading} onClick={generate}>
-          Analyseer
-        </Button>
-      </div>
-
-      {analysis ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
-            <span style={{ fontSize: '28px', fontWeight: 700, fontFamily: 'var(--font-mono)', color: analysis.score >= 75 ? 'var(--accent-green-text)' : 'var(--accent-yellow-text)' }}>
-              {analysis.score}
-            </span>
-            <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>/ 100 discipline score</span>
-          </div>
-          {[
-            { label: 'Wat goed ging', content: analysis.good, bg: 'var(--accent-green-bg)', color: 'var(--accent-green-text)', icon: '✓' },
-            { label: 'Wat beter kan', content: analysis.improve, bg: 'var(--accent-yellow-bg)', color: 'var(--accent-yellow-text)', icon: '!' },
-            { label: 'Grootste prioriteit morgen', content: analysis.priority, bg: 'var(--accent-blue-bg)', color: 'var(--accent-blue-text)', icon: '↑' },
-          ].map((item) => (
-            <div key={item.label} style={{ padding: '12px', background: item.bg, borderRadius: 'var(--radius-sm)' }}>
-              <div style={{ fontSize: '11px', fontWeight: 600, color: item.color, marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                {item.label}
-              </div>
-              <div style={{ fontSize: '13px', color: item.color, lineHeight: 1.5 }}>{item.content}</div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div style={{ textAlign: 'center', padding: '20px 0', color: 'var(--text-muted)', fontSize: '13px' }}>
-          Klik op "Analyseer" voor je dagelijkse AI review.
-          <br />De coach analyseert je voeding, slaap, training en business voortgang.
-        </div>
-      )}
-    </Card>
-  )
-}
-
-// ─── Main Coach Page ──────────────────────────────────────────
+// ─── Main component ───────────────────────────────────────────────
 export default function CoachPage() {
-  const [messages, setMessages] = useState<ChatMessage[]>(INITIAL_MESSAGES)
+  const coachStore = useCoachStore()
+  const supplementStore = useSupplementsStore()
+  const trainingStore = useTrainingStore()
+  const dailyStore = useDailyStore()
+
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const today = new Date().toISOString().split('T')[0]
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  }, [coachStore.messages, loading])
 
-  const send = async (text?: string) => {
-    const msg = text || input
-    if (!msg.trim()) return
-
-    const userMsg: ChatMessage = { role: 'user', content: msg, timestamp: new Date().toISOString() }
-    setMessages((prev) => [...prev, userMsg])
+  const send = async (text: string) => {
+    const q = text.trim()
+    if (!q || loading) return
     setInput('')
+    setError('')
+
+    const userMsg: CoachMessage = {
+      id: Date.now().toString(), role: 'user', content: q,
+      timestamp: new Date().toISOString(),
+    }
+    coachStore.addMessage(userMsg)
     setLoading(true)
 
     try {
+      const systemPrompt = buildContext(supplementStore, trainingStore, dailyStore, today)
+      const history = coachStore.messages.slice(-10).map((m) => ({ role: m.role, content: m.content }))
+
       const res = await fetch('/api/ai/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
-          system: SYSTEM_CONTEXT,
+          system: systemPrompt,
+          messages: [...history, { role: 'user', content: q }],
         }),
       })
 
-      if (res.ok) {
-        const data = await res.json()
-        setMessages((prev) => [...prev, { role: 'assistant', content: data.content, timestamp: new Date().toISOString() }])
-      } else {
-        // Fallback response
-        setMessages((prev) => [...prev, {
-          role: 'assistant',
-          content: 'Ik kan je vraag nu niet verwerken (API niet geconfigureerd). Voeg je OpenRouter API key toe in de instellingen.',
-          timestamp: new Date().toISOString(),
-        }])
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      const rawContent = data.content || 'Geen antwoord ontvangen.'
+
+      // Parse and apply actions
+      const actions = parseActions(rawContent)
+      if (actions.length > 0) {
+        for (const action of actions) {
+          applyAction(
+            action as { type: ActionType; payload: Record<string, unknown> },
+            supplementStore,
+            trainingStore,
+            dailyStore,
+            today
+          )
+        }
       }
-    } catch {
-      setMessages((prev) => [...prev, {
-        role: 'assistant',
-        content: 'Er is een fout opgetreden. Controleer je API key in de instellingen.',
-        timestamp: new Date().toISOString(),
-      }])
+
+      const aiMsg: CoachMessage = {
+        id: (Date.now() + 1).toString(), role: 'assistant',
+        content: rawContent, timestamp: new Date().toISOString(),
+        actions: actions.length > 0 ? actions : undefined,
+      }
+      coachStore.addMessage(aiMsg)
+    } catch (err) {
+      setError('AI tijdelijk niet beschikbaar. Probeer opnieuw.')
+      console.error(err)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
-    <div className="animate-fade-in">
-      <div style={{ marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '22px', fontWeight: 700, letterSpacing: '-0.03em', marginBottom: '4px' }}>AI Coach</h1>
-        <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Jouw persoonlijke coach — financiën, training, voeding, mindset</p>
+    <div className="animate-fade-in" style={{ height: 'calc(100vh - var(--header-h) - 32px)', display: 'flex', flexDirection: 'column', maxHeight: '100%' }}>
+      {/* Header */}
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <h1 style={{ fontSize: 20, fontWeight: 700, letterSpacing: '-0.03em', marginBottom: 2 }}>AI Coach</h1>
+            <p style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+              Vraag advies, verander supplementen, pas je schema aan
+            </p>
+          </div>
+          {coachStore.messages.length > 0 && (
+            <button
+              onClick={() => coachStore.clearHistory()}
+              style={{ fontSize: 12, color: 'var(--text-muted)', background: 'none', border: 'none', padding: '4px 8px' }}
+            >
+              Wis gesprek
+            </button>
+          )}
+        </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '12px' }}>
-        {/* Chat */}
-        <div>
-          <Card padding="none" style={{ display: 'flex', flexDirection: 'column', height: '600px' }}>
-            {/* Chat header */}
-            <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-              <div style={{
-                width: '32px', height: '32px', borderRadius: '50%',
-                background: 'var(--text-primary)', color: 'var(--bg)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '14px', fontWeight: 700,
-              }}>N</div>
-              <div>
-                <div style={{ fontSize: '13px', fontWeight: 600 }}>Nuttin Coach</div>
-                <div style={{ fontSize: '11px', color: 'var(--accent-green-text)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <span style={{ width: '6px', height: '6px', background: 'var(--accent-green-text)', borderRadius: '50%', display: 'inline-block' }} />
-                  Online
+      {/* Chat area */}
+      <div style={{
+        flex: 1, overflowY: 'auto', padding: '4px 0 12px',
+        display: 'flex', flexDirection: 'column',
+      }}>
+        {coachStore.messages.length === 0 ? (
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', gap: 8, padding: '40px 0' }}>
+            <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--accent-blue-bg)', border: '1px solid var(--accent-blue-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, color: 'var(--accent-blue-text)' }}>
+              AI
+            </div>
+            <p style={{ color: 'var(--text-muted)', fontSize: 14, textAlign: 'center', maxWidth: 280 }}>
+              Stel een vraag of gebruik een snelkoppeling hieronder
+            </p>
+          </div>
+        ) : (
+          <>
+            {coachStore.messages.map((msg) => <Bubble key={msg.id} msg={msg} />)}
+            {loading && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--accent-blue-bg)', border: '1px solid var(--accent-blue-border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--accent-blue-text)', fontWeight: 700 }}>AI</div>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {[0,1,2].map((i) => (
+                    <div key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--text-muted)', animation: `pulse-dot 1.2s ease ${i * 0.2}s infinite` }} />
+                  ))}
                 </div>
               </div>
-              <Badge variant="muted" className="ml-auto">OpenRouter</Badge>
-            </div>
-
-            {/* Messages */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
-              {messages.map((m, i) => <MessageBubble key={i} msg={m} />)}
-              {loading && (
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
-                  <div style={{ display: 'flex', gap: '3px' }}>
-                    {[0, 1, 2].map((i) => (
-                      <div key={i} style={{ width: '6px', height: '6px', borderRadius: '50%', background: 'var(--text-muted)', animation: `pulse 1.4s ease ${i * 0.2}s infinite` }} />
-                    ))}
-                  </div>
-                  Aan het denken...
-                </div>
-              )}
-              <div ref={bottomRef} />
-            </div>
-
-            {/* Quick actions */}
-            <div style={{ padding: '8px 12px', borderTop: '1px solid var(--border)', display: 'flex', gap: '4px', overflowX: 'auto' }}>
-              {QUICK_ACTIONS.slice(0, 3).map((a) => (
-                <button
-                  key={a}
-                  onClick={() => send(a)}
-                  style={{
-                    padding: '4px 10px', borderRadius: 'var(--radius-full)',
-                    fontSize: '11px', border: '1px solid var(--border)',
-                    background: 'var(--bg-secondary)', color: 'var(--text-secondary)',
-                    cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
-                  }}
-                >
-                  {a}
-                </button>
-              ))}
-            </div>
-
-            {/* Input */}
-            <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', gap: '8px' }}>
-              <Textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-                placeholder="Stel een vraag..."
-                style={{ minHeight: '36px', height: '36px', resize: 'none', flex: 1 }}
-              />
-              <Button variant="primary" onClick={() => send()} disabled={!input.trim() || loading} size="md">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
-                </svg>
-              </Button>
-            </div>
-          </Card>
-        </div>
-
-        {/* Right panel */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <DailyAnalysis />
-
-          {/* Quick actions full list */}
-          <Card padding="md">
-            <CardTitle>Snelle vragen</CardTitle>
-            <div style={{ marginTop: '10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              {QUICK_ACTIONS.map((a) => (
-                <button
-                  key={a}
-                  onClick={() => send(a)}
-                  style={{
-                    textAlign: 'left', padding: '8px 12px',
-                    borderRadius: 'var(--radius-sm)',
-                    fontSize: '13px', color: 'var(--text-secondary)',
-                    background: 'transparent', border: '1px solid var(--border)',
-                    cursor: 'pointer', transition: 'all 0.15s ease',
-                    display: 'flex', alignItems: 'center', gap: '8px',
-                  }}
-                  onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-secondary)' }}
-                  onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.background = 'transparent' }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="9 18 15 12 9 6" />
-                  </svg>
-                  {a}
-                </button>
-              ))}
-            </div>
-          </Card>
-        </div>
+            )}
+          </>
+        )}
+        {error && (
+          <div style={{ padding: '10px 14px', background: 'var(--accent-red-bg)', border: '1px solid var(--accent-red-border)', borderRadius: 'var(--radius-md)', fontSize: 13, color: 'var(--accent-red-text)', marginBottom: 10 }}>
+            {error}
+          </div>
+        )}
+        <div ref={bottomRef} />
       </div>
+
+      {/* Quick prompts */}
+      {coachStore.messages.length === 0 && (
+        <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+          {QUICK_PROMPTS.map((p) => (
+            <button
+              key={p}
+              onClick={() => send(p)}
+              disabled={loading}
+              style={{
+                padding: '6px 12px', fontSize: 12, borderRadius: 99,
+                border: '1px solid var(--border)', background: 'var(--surface)',
+                color: 'var(--text-secondary)', cursor: 'pointer',
+                transition: 'all 0.12s ease',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--border-strong)')}
+              onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Input */}
+      <div style={{
+        display: 'flex', gap: 8, padding: '12px', marginBottom: 0,
+        background: 'var(--surface)', border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-lg)',
+      }}>
+        <textarea
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input) } }}
+          placeholder="Stel een vraag... (bv. 'Zet Magnesium uit' of 'Welke spieren moet ik trainen?')"
+          rows={2}
+          style={{
+            flex: 1, resize: 'none', padding: '8px 10px',
+            background: 'transparent', border: 'none', outline: 'none',
+            color: 'var(--text-primary)', fontSize: 14, lineHeight: 1.5,
+            fontFamily: 'inherit',
+          }}
+        />
+        <button
+          onClick={() => send(input)}
+          disabled={loading || !input.trim()}
+          style={{
+            width: 36, height: 36, borderRadius: 'var(--radius-md)', flexShrink: 0,
+            background: loading || !input.trim() ? 'var(--bg-tertiary)' : 'var(--text-primary)',
+            color: loading || !input.trim() ? 'var(--text-muted)' : 'var(--text-inverse)',
+            border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'all 0.15s ease', cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
+            alignSelf: 'flex-end',
+          }}
+        >
+          {loading ? (
+            <div className="animate-spin" style={{ width: 14, height: 14, border: '2px solid currentColor', borderTopColor: 'transparent', borderRadius: '50%' }} />
+          ) : (
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          )}
+        </button>
+      </div>
+
+      <p style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center', marginTop: 6 }}>
+        Gratis AI via OpenRouter · Enter om te sturen
+      </p>
+
+      <style>{`@keyframes pulse-dot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.3;transform:scale(0.7)} }`}</style>
     </div>
   )
 }

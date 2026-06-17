@@ -21,9 +21,8 @@ export default function DashboardLayout({
           display: 'flex',
           flexDirection: 'column',
           minWidth: 0,
-          marginLeft: '0',
         }}
-        className="md:ml-[220px]"
+        className="sidebar-offset"
       >
         <Header onMenuClick={() => setSidebarOpen(true)} />
         <main

@@ -11,11 +11,11 @@ interface ApiKey {
 }
 
 const API_KEYS: ApiKey[] = [
-  { key: 'openrouter', label: 'OpenRouter API Key', description: 'Gratis tier voor AI coach. Haal op via openrouter.ai/keys', placeholder: 'sk-or-...', status: 'missing' },
+  { key: 'openrouter', label: 'OpenRouter API Key', description: 'AI coach (gratis modellen). Haal op via openrouter.ai/keys', placeholder: 'sk-or-...', status: 'missing' },
   { key: 'ghl_api', label: 'GoHighLevel API Key', description: 'CRM integratie voor contacten en agenda', placeholder: 'eyJ...', status: 'missing' },
   { key: 'ghl_location', label: 'GoHighLevel Location ID', description: 'Jouw locatie ID in GoHighLevel dashboard', placeholder: 'abc123...', status: 'missing' },
-  { key: 'supabase_url', label: 'Supabase Project URL', description: 'Database URL van supabase.com/dashboard', placeholder: 'https://xxx.supabase.co', status: 'optional' },
-  { key: 'supabase_anon', label: 'Supabase Anon Key', description: 'Public anon key voor database toegang', placeholder: 'eyJ...', status: 'optional' },
+  { key: 'obsidian_key', label: 'Obsidian API Key', description: 'Local REST API plugin token (localhost:27123). Instellingen → Local REST API', placeholder: 'xxxxxx', status: 'optional' },
+  { key: 'google_client_id', label: 'Google Client ID', description: 'Voor Google Calendar & Gmail sync. Via console.cloud.google.com', placeholder: 'xxx.apps.googleusercontent.com', status: 'optional' },
 ]
 
 function ApiKeyInput({ apiKey }: { apiKey: ApiKey }) {
@@ -65,15 +65,26 @@ function ApiKeyInput({ apiKey }: { apiKey: ApiKey }) {
 
 export default function SettingsPage() {
   const { theme, toggleTheme } = useThemeStore()
-  const [whatsappStatus, setWhatsappStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected')
   const [ghlInfo, setGhlInfo] = useState<{ connected: boolean; contactCount?: number } | null>(null)
+  const [renderUrl, setRenderUrl] = useState('')
+  const [waBridgeStatus, setWaBridgeStatus] = useState<'unknown' | 'connected' | 'awaiting_scan' | 'starting'>('unknown')
 
   useEffect(() => {
     fetch('/api/ghl/status')
       .then((r) => r.json())
       .then((d) => setGhlInfo({ connected: d.connected, contactCount: d.contactCount }))
       .catch(() => setGhlInfo({ connected: false }))
+    const saved = localStorage.getItem('wa_bridge_url')
+    if (saved) setRenderUrl(saved)
   }, [])
+
+  const checkBridgeStatus = async (url: string) => {
+    try {
+      const r = await fetch(`${url}/status`)
+      const d = await r.json()
+      setWaBridgeStatus(d.connected ? 'connected' : d.hasQR ? 'awaiting_scan' : 'starting')
+    } catch { setWaBridgeStatus('unknown') }
+  }
 
   return (
     <div className="animate-fade-in">
@@ -111,50 +122,74 @@ export default function SettingsPage() {
 
           {/* WhatsApp */}
           <Card padding="md">
-            <CardHeader
-              action={
-                <Badge variant={whatsappStatus === 'connected' ? 'green' : whatsappStatus === 'connecting' ? 'yellow' : 'muted'}>
-                  {whatsappStatus === 'connected' ? 'Verbonden' : whatsappStatus === 'connecting' ? 'QR wacht...' : 'Niet verbonden'}
-                </Badge>
-              }
-            >
+            <CardHeader action={
+              <Badge variant={waBridgeStatus === 'connected' ? 'green' : waBridgeStatus === 'awaiting_scan' ? 'yellow' : 'muted'}>
+                {waBridgeStatus === 'connected' ? 'Verbonden' : waBridgeStatus === 'awaiting_scan' ? 'Scan QR' : 'Niet verbonden'}
+              </Badge>
+            }>
               <CardTitle>WhatsApp Bot</CardTitle>
             </CardHeader>
 
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '14px', lineHeight: 1.6 }}>
-              De WhatsApp bot stuurt je dagelijkse meldingen, gebedstijden en vraagt je 3 prioriteiten.
-              Verbind via QR code — geen Business API nodig.
+            <div style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '12px', lineHeight: 1.6 }}>
+              Vul je Render URL in en klik QR Scannen.
             </div>
 
-            <div style={{ display: 'flex', gap: '8px' }}>
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+              <input
+                className="inp"
+                placeholder="https://nuttin-whatsapp-bridge.onrender.com"
+                value={renderUrl}
+                onChange={(e) => setRenderUrl(e.target.value)}
+                onBlur={() => { if (renderUrl) { localStorage.setItem('wa_bridge_url', renderUrl); checkBridgeStatus(renderUrl) } }}
+                style={{ flex: 1, fontSize: '12px' }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
               <Button
                 variant="primary"
                 size="md"
-                onClick={() => {
-                  setWhatsappStatus('connecting')
-                  window.open('http://localhost:3002/whatsapp/qr', '_blank')
-                }}
-                disabled={whatsappStatus !== 'disconnected'}
+                onClick={() => { if (renderUrl) window.open(`${renderUrl}/qr`, '_blank') }}
+                disabled={!renderUrl}
               >
-                QR Code scannen
+                QR Scannen
               </Button>
-              {whatsappStatus !== 'disconnected' && (
-                <Button variant="secondary" size="md" onClick={() => setWhatsappStatus('disconnected')}>
-                  Ontkoppelen
-                </Button>
-              )}
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => renderUrl && checkBridgeStatus(renderUrl)}
+                disabled={!renderUrl}
+              >
+                Status check
+              </Button>
             </div>
 
-            <div style={{ marginTop: '14px' }}>
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '6px' }}>Berichten die je ontvangt:</div>
-              <ul style={{ fontSize: '12px', color: 'var(--text-muted)', paddingLeft: '16px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                <li>07:00 — Dagprogramma & prioriteiten</li>
-                <li>5x per dag — Gebedstijden</li>
-                <li>Voor training — Pre-workout reminder</li>
-                <li>21:00 — "Wat zijn je 3 prioriteiten voor morgen?"</li>
-                <li>22:30 — Slaapherinnering</li>
-                <li>Afspraken — 1 dag & 1 uur van tevoren</li>
-              </ul>
+            <div style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: '12px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 600, marginBottom: '6px' }}>Render omgevingsvariabelen:</div>
+              {[
+                ['NUTTIN_WEBHOOK_URL', typeof window !== 'undefined' ? window.location.origin + '/api/whatsapp/webhook' : ''],
+                ['MY_WA_NUMBER', '32456559189'],
+              ].map(([k, v]) => (
+                <div key={k} style={{ marginBottom: '4px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--text-muted)', minWidth: '160px' }}>{k}</span>
+                  <span
+                    style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--accent-blue-text)', cursor: 'pointer' }}
+                    onClick={() => navigator.clipboard.writeText(v)}
+                    title="Klik om te kopiëren"
+                  >{v || '…'} <span style={{ opacity: 0.5 }}>⎘</span></span>
+                </div>
+              ))}
+            </div>
+
+            <CardDivider />
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '5px', marginTop: '8px' }}>Commando&apos;s:</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+              {[['prioriteiten: 1. X 2. Y','Top 3'],['gewicht: 87.5','Gewicht'],['gegeten: 4 eieren','Maaltijd'],['cash: 350','Inkomen'],['status','Overzicht']].map(([cmd, desc]) => (
+                <div key={cmd} style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12px' }}>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--accent-blue-text)', background: 'var(--accent-blue-bg)', padding: '2px 6px', borderRadius: '4px', flexShrink: 0 }}>{cmd}</span>
+                  <span style={{ color: 'var(--text-muted)' }}>{desc}</span>
+                </div>
+              ))}
             </div>
           </Card>
         </div>
@@ -234,7 +269,7 @@ export default function SettingsPage() {
             <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <ol style={{ fontSize: '13px', color: 'var(--text-secondary)', paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
                 <li>Open <strong>Safari</strong> op iPhone (niet Chrome)</li>
-                <li>Ga naar <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--accent-blue-text)' }}>jouw-app.vercel.app</span></li>
+                <li>Ga naar <span style={{ fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--accent-blue-text)' }}>nuttin-dashboard.vercel.app</span></li>
                 <li>Tik op het <strong>Deel icoon</strong> (vierkant met pijl omhoog)</li>
                 <li>Scroll naar beneden → <strong>"Zet op beginscherm"</strong></li>
                 <li>Geef de naam <strong>"Nuttin OS"</strong> en tik "Voeg toe"</li>

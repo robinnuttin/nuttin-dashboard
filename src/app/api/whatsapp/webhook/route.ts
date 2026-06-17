@@ -1,105 +1,173 @@
 import { NextRequest, NextResponse } from 'next/server'
 
-// WhatsApp webhook — receives messages from the bot service
-// The bot sends a POST here when it receives a message from the user
-
-interface WhatsAppMessage {
-  from: string  // phone number
-  body: string  // message text
-  timestamp: number
-}
-
 export async function POST(req: NextRequest) {
   try {
-    const { from, body, timestamp }: WhatsAppMessage = await req.json()
+    const body = await req.json()
+    const { from, body: msgBody, parsedTasks, parsedAppointments, senderName } = body
+    const text = (msgBody || '').trim()
+    const lower = text.toLowerCase()
 
-    const text = body.trim().toLowerCase()
-
-    // Parse commands
-    if (text.startsWith('prioriteiten:') || text.startsWith('prioriteiten ')) {
-      return handlePriorities(text, from)
+    // ─── Family conversation task parsing ─────────────────────
+    if (parsedTasks || parsedAppointments) {
+      // Store to Obsidian if configured
+      const tasks = parsedTasks || []
+      const apts  = parsedAppointments || []
+      let summary = `Taken/afspraken van ${senderName || 'contact'}:`
+      tasks.forEach((t: { title: string; due_date?: string }) => { summary += `\n• ${t.title}${t.due_date ? ` (${t.due_date})` : ''}` })
+      apts.forEach((a: { title: string; datetime?: string }) => { summary += `\n• Afspraak: ${a.title} ${a.datetime || ''}` })
+      return NextResponse.json({ reply: null, parsed: true, summary })
     }
 
-    if (text.startsWith('gewicht:') || text.startsWith('gewicht ')) {
-      return handleWeight(text, from)
+    // ─── Own commands ──────────────────────────────────────────
+    if (lower.startsWith('prioriteiten')) {
+      return handlePriorities(text)
+    }
+    if (lower.startsWith('gewicht')) {
+      return handleWeight(text)
+    }
+    if (lower.startsWith('gegeten')) {
+      return handleNutrition(text)
+    }
+    if (lower.startsWith('cash') || lower.startsWith('inkomen')) {
+      return handleCash(text)
+    }
+    if (lower.startsWith('supplement')) {
+      return handleSupplement(text)
+    }
+    if (lower === 'status' || lower === 'overzicht') {
+      return handleStatus()
+    }
+    if (lower.startsWith('training')) {
+      return NextResponse.json({ reply: 'Training gelogd in de app. Open Nuttin OS om je sets in te voeren.' })
+    }
+    if (lower.startsWith('sauna')) {
+      return NextResponse.json({ reply: 'Sauna ingepland! Vergeet het in te checken in Dagelijks overzicht in de app.' })
+    }
+    if (lower.startsWith('help') || lower === '?') {
+      return NextResponse.json({ reply: helpText() })
     }
 
-    if (text.startsWith('gegeten:') || text.startsWith('gegeten ')) {
-      return handleNutrition(body, from)
+    // ─── AI fallback ───────────────────────────────────────────
+    const apiKey = process.env.OPENROUTER_API_KEY
+    if (apiKey) {
+      try {
+        const aiRes = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL || '',
+            'X-Title': 'Nuttin OS WhatsApp',
+          },
+          body: JSON.stringify({
+            model: 'google/gemma-4-31b-it:free',
+            messages: [
+              { role: 'system', content: 'Je bent een compacte WhatsApp assistent voor Robin (Nuttin). Antwoord kort en direct in het Nederlands. Max 3 zinnen. Je weet dat Robin: 87kg wil → 91kg, 19% vetpercentage wil verlagen, €10k/maand doel heeft, 5x per dag bidt, in Kortrijk woont.' },
+              { role: 'user', content: text },
+            ],
+            max_tokens: 200,
+            temperature: 0.7,
+          }),
+        })
+        if (aiRes.ok) {
+          const data = await aiRes.json()
+          const reply = data.choices?.[0]?.message?.content
+          if (reply) return NextResponse.json({ reply })
+        }
+      } catch { /* fall through */ }
     }
 
-    if (text.startsWith('cash:') || text.startsWith('cash ')) {
-      return handleCash(text, from)
-    }
-
-    if (text === 'status' || text === 'overzicht') {
-      return handleStatus(from)
-    }
-
-    // Default response
-    return NextResponse.json({
-      reply: 'Begrepen! Gebruik:\n• "prioriteiten: 1. X 2. Y 3. Z"\n• "gewicht: 87.5"\n• "gegeten: 4 eieren en brood"\n• "cash: 150 inboedel"\n• "status"',
-    })
+    return NextResponse.json({ reply: helpText() })
   } catch (error) {
     console.error('WhatsApp webhook error:', error)
     return NextResponse.json({ error: 'Webhook failed' }, { status: 500 })
   }
 }
 
-async function handlePriorities(text: string, from: string) {
-  // Extract priorities from message like "prioriteiten: 1. bellen klant 2. emails 3. gym"
-  const matches = text.match(/\d\.\s*([^0-9\n]+)/g)
-  if (matches && matches.length > 0) {
-    const priorities = matches.map(m => m.replace(/^\d\.\s*/, '').trim())
-
-    // In production: save to database
-    // await supabase.from('daily_priorities').upsert({ date: today, priority_1: priorities[0], ... })
-
+function handlePriorities(text: string) {
+  const lower = text.toLowerCase().replace(/^prioriteiten:?\s*/i, '')
+  // Match "1. X, 2. Y, 3. Z" or "1: X 2: Y" or comma-separated
+  const numbered = lower.match(/\d[.:]\s*([^,\d\n]+)/g)
+  if (numbered?.length) {
+    const items = numbered.map((m) => m.replace(/^\d[.:]\s*/, '').trim()).filter(Boolean).slice(0, 3)
     return NextResponse.json({
-      reply: `Top 3 prioriteiten opgeslagen voor morgen:\n1. ${priorities[0] || '-'}\n2. ${priorities[1] || '-'}\n3. ${priorities[2] || '-'}\n\nSucces morgen!`,
+      reply: `Top 3 opgeslagen:\n1. ${items[0] || '-'}\n2. ${items[1] || '-'}\n3. ${items[2] || '-'}\n\nZichtbaar in Nuttin OS morgen.`,
+      action: 'priorities',
+      data: items,
     })
   }
-
-  return NextResponse.json({
-    reply: 'Stuur je prioriteiten zo:\n"prioriteiten: 1. emails sturen 2. gym 3. deals opvolgen"',
-  })
+  // Comma-separated
+  const parts = lower.split(',').map((s) => s.trim()).filter(Boolean).slice(0, 3)
+  if (parts.length >= 2) {
+    return NextResponse.json({
+      reply: `Top 3 opgeslagen:\n1. ${parts[0]}\n2. ${parts[1] || '-'}\n3. ${parts[2] || '-'}`,
+      action: 'priorities',
+      data: parts,
+    })
+  }
+  return NextResponse.json({ reply: 'Stuur zo: "prioriteiten: 1. emails 2. gym 3. deals opvolgen"' })
 }
 
-async function handleWeight(text: string, from: string) {
-  const match = text.match(/\d+\.?\d*/)
+function handleWeight(text: string) {
+  const match = text.match(/\d+[.,]?\d*/)
   if (match) {
-    const weight = parseFloat(match[0])
-    // In production: save to database
+    const w = parseFloat(match[0].replace(',', '.'))
+    const diff = (91 - w).toFixed(1)
     return NextResponse.json({
-      reply: `Gewicht opgeslagen: ${weight} kg. Doel: 91-92 kg. Nog ${Math.max(0, 91 - weight).toFixed(1)} kg te gaan!`,
+      reply: `Gewicht: ${w} kg. Doel 91-92 kg. ${Number(diff) > 0 ? `Nog ${diff} kg te gaan!` : 'Doel bereikt!'}`,
+      action: 'weight',
+      data: { weight: w },
     })
   }
   return NextResponse.json({ reply: 'Stuur: "gewicht: 87.5"' })
 }
 
-async function handleNutrition(text: string, from: string) {
-  // Trigger nutrition analysis
-  const food = text.replace(/^gegeten:?\s*/i, '')
+function handleNutrition(text: string) {
+  const food = text.replace(/^gegeten:?\s*/i, '').trim()
   return NextResponse.json({
-    reply: `Voeding gelogd: "${food}"\n\nOpen de app voor de exacte macro's en dagelijkse voortgang.`,
+    reply: `Voeding gelogd: "${food}". Open de app voor macro-analyse door AI.`,
+    action: 'nutrition',
+    data: { food },
   })
 }
 
-async function handleCash(text: string, from: string) {
-  const match = text.match(/\d+/)
+function handleCash(text: string) {
+  const match = text.match(/\d+[.,]?\d*/)
   if (match) {
-    const amount = parseInt(match[0])
-    const reason = text.replace(/cash:?\s*\d+\s*/i, '').trim()
+    const amount = parseFloat(match[0].replace(',', '.'))
+    const desc = text.replace(/^(cash|inkomen):?\s*\d+[.,]?\d*\s*/i, '').trim()
     return NextResponse.json({
-      reply: `Cash inkomsten opgeslagen: €${amount}${reason ? ` (${reason})` : ''}. Vergeet dit niet in te boeken in de app!`,
+      reply: `€${amount} inkomen opgeslagen${desc ? ` — ${desc}` : ''}. Verwerk in Financiën in de app.`,
+      action: 'income',
+      data: { amount, description: desc },
     })
   }
-  return NextResponse.json({ reply: 'Stuur: "cash: 150 inboedel"' })
+  return NextResponse.json({ reply: 'Stuur: "cash: 350 review cards"' })
 }
 
-async function handleStatus(from: string) {
-  // In production: fetch real data from database
+function handleSupplement(text: string) {
+  const lower = text.toLowerCase()
+  const supplements = ['creatine', 'vitamine d', 'vitd', 'magnesium', 'zink', 'b12', 'calcium', 'omega-3', 'omega3']
+  const found = supplements.find((s) => lower.includes(s))
+
+  if (found && (lower.includes('uit') || lower.includes('stop') || lower.includes('niet meer'))) {
+    return NextResponse.json({ reply: `${found} uitgeschakeld. Wijzig via AI Coach in de app: "Zet ${found} uit"` })
+  }
+  if (found && (lower.includes('aan') || lower.includes('start') || lower.includes('toevoeg'))) {
+    return NextResponse.json({ reply: `${found} ingeschakeld. Wijzig via AI Coach in de app: "Zet ${found} aan"` })
+  }
+  return NextResponse.json({ reply: 'Supplement aanpassen? Zeg tegen de AI Coach: "Zet [supplement] aan/uit"' })
+}
+
+function handleStatus() {
+  const now = new Date()
+  const hour = now.getHours()
+  const greeting = hour < 12 ? 'Goedemorgen' : hour < 18 ? 'Goedemiddag' : 'Goedenavond'
   return NextResponse.json({
-    reply: `📊 Status update:\n\n💶 Financieel: €4.000/€10.000 (40%)\n🤝 Deals: 2/6 gesloten\n📇 Review cards: 8 verkocht\n\n⚡ Prioriteit: 80 emails sturen vandaag`,
+    reply: `${greeting}! Open Nuttin OS voor je volledige status:\n• Financieel overzicht\n• Trainingsvoortgang\n• Supplement check\n• Agenda\n\nnuttin-dashboard.vercel.app`,
   })
+}
+
+function helpText(): string {
+  return `Commando\'s:\n• "prioriteiten: 1. X 2. Y 3. Z"\n• "gewicht: 87.5"\n• "gegeten: 4 eieren"\n• "cash: 350 review cards"\n• "supplement creatine uit"\n• "status"\n\nOf stel gewoon een vraag!`
 }

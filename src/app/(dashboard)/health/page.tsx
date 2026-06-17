@@ -5,35 +5,32 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { useBodyStatsStore } from '@/stores/app-store'
+import { useBodyStore } from '@/stores/app-store'
 import { estimateMuscleMass, formatDate, getTodayString } from '@/lib/utils'
-import type { BodyStats } from '@/types'
 
 const HEIGHT = 1.91
 
 // ─── Body Composition Card ────────────────────────────────────
 function BodyCompositionCard() {
-  const { entries, addEntry, latestStats } = useBodyStatsStore()
+  const { measurements, add, latest } = useBodyStore()
   const [open, setOpen] = useState(false)
   const [weight, setWeight] = useState('')
   const [fat, setFat] = useState('')
 
-  const latest = latestStats()
-  const muscleMass = latest ? estimateMuscleMass(latest.weight_kg, latest.body_fat_pct) : null
+  const latestMeasurement = latest()
+  const bodyFat = latestMeasurement?.body_fat_pct ?? 18
+  const muscleMass = latestMeasurement ? estimateMuscleMass(latestMeasurement.weight_kg, bodyFat) : null
 
-  const weightProgress = latest ? ((latest.weight_kg - 87) / (92 - 87)) * 100 : 0
-  const fatProgress = latest ? ((20 - latest.body_fat_pct) / (20 - 12)) * 100 : 0
+  const weightProgress = latestMeasurement ? ((latestMeasurement.weight_kg - 87) / (92 - 87)) * 100 : 0
+  const fatProgress = ((20 - bodyFat) / (20 - 12)) * 100
 
   const addStats = () => {
     if (!weight) return
-    const entry: BodyStats = {
-      id: Date.now().toString(),
+    add({
       date: getTodayString(),
       weight_kg: Number(weight),
       body_fat_pct: Number(fat) || 18,
-      muscle_mass_kg: estimateMuscleMass(Number(weight), Number(fat) || 18),
-    }
-    addEntry(entry)
+    })
     setOpen(false)
     setWeight('')
     setFat('')
@@ -61,21 +58,20 @@ function BodyCompositionCard() {
         </div>
       )}
 
-      {latest ? (
+      {latestMeasurement ? (
         <>
-          {/* Main stats */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', marginBottom: '20px' }}>
             <div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '6px' }}>Gewicht</div>
               <div style={{ fontSize: '32px', fontWeight: 700, letterSpacing: '-0.04em', lineHeight: 1 }}>
-                {latest.weight_kg}<span style={{ fontSize: '16px', fontWeight: 400, color: 'var(--text-muted)' }}>kg</span>
+                {latestMeasurement.weight_kg}<span style={{ fontSize: '16px', fontWeight: 400, color: 'var(--text-muted)' }}>kg</span>
               </div>
               <div style={{ fontSize: '12px', color: 'var(--accent-blue-text)', marginTop: '4px' }}>Doel: 91-92 kg</div>
             </div>
             <div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '6px' }}>Vetpercentage</div>
               <div style={{ fontSize: '32px', fontWeight: 700, letterSpacing: '-0.04em', lineHeight: 1 }}>
-                {latest.body_fat_pct}<span style={{ fontSize: '16px', fontWeight: 400, color: 'var(--text-muted)' }}>%</span>
+                {bodyFat}<span style={{ fontSize: '16px', fontWeight: 400, color: 'var(--text-muted)' }}>%</span>
               </div>
               <div style={{ fontSize: '12px', color: 'var(--accent-yellow-text)', marginTop: '4px' }}>Doel: 10-12%</div>
             </div>
@@ -88,7 +84,6 @@ function BodyCompositionCard() {
             </div>
           </div>
 
-          {/* Progress to goals */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             <Progress label="Gewicht naar 92 kg" value={Math.max(weightProgress, 0)} max={100} height={4} color="var(--accent-blue-text)" showValue />
             <Progress label="Vetpercentage naar 12%" value={Math.max(fatProgress, 0)} max={100} height={4} color="var(--accent-yellow-text)" showValue />
@@ -96,14 +91,13 @@ function BodyCompositionCard() {
 
           <CardDivider />
 
-          {/* History */}
           <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '8px' }}>Meetgeschiedenis</div>
-          {entries.slice(0, 5).map((e) => (
-            <div key={e.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{formatDate(e.date)}</span>
-              <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>{e.weight_kg} kg</span>
-              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{e.body_fat_pct}% vet</span>
-              <span style={{ fontSize: '12px', color: 'var(--accent-green-text)' }}>{e.muscle_mass_kg}kg lean</span>
+          {measurements.slice(0, 5).map((m) => (
+            <div key={m.date} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{formatDate(m.date)}</span>
+              <span style={{ fontSize: '13px', fontFamily: 'var(--font-mono)', fontWeight: 500 }}>{m.weight_kg} kg</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>{m.body_fat_pct ?? '—'}% vet</span>
+              <span style={{ fontSize: '12px', color: 'var(--accent-green-text)' }}>{estimateMuscleMass(m.weight_kg, m.body_fat_pct ?? 18)}kg lean</span>
             </div>
           ))}
         </>
@@ -174,13 +168,10 @@ function SupplementTracker() {
 
 // ─── Testosterone Score ────────────────────────────────────────
 function TestosteroneScore() {
-  const latest = useBodyStatsStore((s) => s.latestStats)()
-  const bodyFat = latest?.body_fat_pct || 18
+  const bodyFat = useBodyStore((s) => s.latest)()?.body_fat_pct ?? 18
   const score = Math.round(
-    (bodyFat <= 15 ? 30 : bodyFat <= 18 ? 20 : 10) + // body fat
-    25 + // sleep placeholder
-    20 + // training placeholder
-    5   // supplements
+    (bodyFat <= 15 ? 30 : bodyFat <= 18 ? 20 : 10) +
+    25 + 20 + 5
   )
 
   const factors = [
@@ -219,11 +210,11 @@ function TestosteroneScore() {
 
 // ─── Appearance Tracker ────────────────────────────────────────
 const APPEARANCE_TASKS = [
-  { id: 'whitening', name: 'White strips', frequency: 'Elke 1-2 dagen', category: 'teeth' as const },
-  { id: 'jaw', name: 'Kaakspier oefeningen', frequency: 'Dagelijks, 2x 5 min', category: 'face' as const },
-  { id: 'facial', name: 'Gezichtsoefeningen', frequency: 'Dagelijks', category: 'face' as const },
-  { id: 'pelvic', name: 'Bekkenoefeningen', frequency: '2x per week', category: 'body' as const },
-  { id: 'skincare', name: 'Huidverzorging routine', frequency: 'Ochtend & avond', category: 'face' as const },
+  { id: 'whitening', name: 'White strips', frequency: 'Elke 1-2 dagen' },
+  { id: 'jaw', name: 'Kaakspier oefeningen', frequency: 'Dagelijks, 2x 5 min' },
+  { id: 'facial', name: 'Gezichtsoefeningen', frequency: 'Dagelijks' },
+  { id: 'pelvic', name: 'Bekkenoefeningen', frequency: '2x per week' },
+  { id: 'skincare', name: 'Huidverzorging routine', frequency: 'Ochtend & avond' },
 ]
 
 function AppearanceTracker() {
@@ -260,7 +251,6 @@ function AppearanceTracker() {
         ))}
       </div>
 
-      {/* Tips */}
       <div style={{ marginTop: '14px', padding: '12px', background: 'var(--accent-blue-bg)', borderRadius: 'var(--radius-sm)' }}>
         <div style={{ fontSize: '12px', fontWeight: 500, color: 'var(--accent-blue-text)', marginBottom: '6px' }}>
           Tips voor face definition
@@ -279,12 +269,12 @@ function AppearanceTracker() {
 // ─── Sleep Overview ────────────────────────────────────────────
 function SleepCard() {
   const sleepData = [
-    { date: '10 jun', hours: 7.5, quality: 7 },
-    { date: '11 jun', hours: 8, quality: 8 },
-    { date: '12 jun', hours: 6.5, quality: 5 },
-    { date: '13 jun', hours: 8, quality: 9 },
-    { date: '14 jun', hours: 7, quality: 7 },
-    { date: '15 jun', hours: 8.5, quality: 8 },
+    { date: '10 jun', hours: 7.5 },
+    { date: '11 jun', hours: 8 },
+    { date: '12 jun', hours: 6.5 },
+    { date: '13 jun', hours: 8 },
+    { date: '14 jun', hours: 7 },
+    { date: '15 jun', hours: 8.5 },
   ]
   const avg = sleepData.reduce((s, d) => s + d.hours, 0) / sleepData.length
 

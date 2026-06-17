@@ -58,7 +58,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
               ...style,
             }}
             onFocus={(e) => {
-              ;(e.currentTarget as HTMLInputElement).style.borderColor = 'var(--border-focus)'
+              ;(e.currentTarget as HTMLInputElement).style.borderColor = 'var(--accent-blue-text)'
               props.onFocus?.(e)
             }}
             onBlur={(e) => {
@@ -132,7 +132,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
             ...style,
           }}
           onFocus={(e) => {
-            ;(e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--border-focus)'
+            ;(e.currentTarget as HTMLTextAreaElement).style.borderColor = 'var(--accent-blue-text)'
             props.onFocus?.(e)
           }}
           onBlur={(e) => {

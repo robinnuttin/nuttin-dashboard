@@ -11,36 +11,37 @@ interface CardProps {
 }
 
 export function Card({ children, className, style, onClick, hover = false, padding = 'md' }: CardProps) {
-  const paddingMap = { none: '', sm: 'p-3', md: 'p-4', lg: 'p-6' }
+  const paddingMap = { none: '', sm: 'p-3', md: 'p-4 md:p-5', lg: 'p-5 md:p-6' }
 
   return (
     <div
       onClick={onClick}
       className={cn(
+        'transition-shadow',
         paddingMap[padding],
         onClick || hover ? 'cursor-pointer' : '',
         className
       )}
       style={{
-        background: 'var(--bg)',
+        background: 'var(--bg-secondary)',
         border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-md)',
-        transition: 'box-shadow 0.15s ease, border-color 0.15s ease',
+        borderRadius: 'var(--radius-lg)',
+        ...(onClick || hover ? {} : {}),
         ...style,
       }}
       onMouseEnter={
         hover || onClick
           ? (e) => {
-              ;(e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-sm)'
-              ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border-strong)'
+              e.currentTarget.style.boxShadow = 'var(--shadow-card-hover)'
+              e.currentTarget.style.borderColor = 'var(--border-strong)'
             }
           : undefined
       }
       onMouseLeave={
         hover || onClick
           ? (e) => {
-              ;(e.currentTarget as HTMLDivElement).style.boxShadow = ''
-              ;(e.currentTarget as HTMLDivElement).style.borderColor = 'var(--border)'
+              e.currentTarget.style.boxShadow = 'none'
+              e.currentTarget.style.borderColor = 'var(--border)'
             }
           : undefined
       }
@@ -59,7 +60,7 @@ interface CardHeaderProps {
 export function CardHeader({ children, className, action }: CardHeaderProps) {
   return (
     <div className={cn('flex items-start justify-between mb-4', className)}>
-      <div>{children}</div>
+      <div className="min-w-0 flex-1">{children}</div>
       {action && <div className="ml-3 flex-shrink-0">{action}</div>}
     </div>
   )
@@ -74,16 +75,7 @@ interface CardTitleProps {
 export function CardTitle({ children, className, subtitle }: CardTitleProps) {
   return (
     <div className={className}>
-      <h3
-        style={{
-          fontSize: '13px',
-          fontWeight: 500,
-          color: 'var(--text-muted)',
-          letterSpacing: '0.04em',
-          textTransform: 'uppercase',
-          marginBottom: subtitle ? '2px' : '0',
-        }}
-      >
+      <h3 className="text-caption" style={{ marginBottom: subtitle ? '2px' : '0' }}>
         {children}
       </h3>
       {subtitle && (
@@ -96,5 +88,5 @@ export function CardTitle({ children, className, subtitle }: CardTitleProps) {
 }
 
 export function CardDivider() {
-  return <div style={{ height: '1px', background: 'var(--border)', margin: '12px 0' }} />
+  return <div style={{ height: '1px', background: 'var(--border)', margin: '14px 0' }} />
 }
