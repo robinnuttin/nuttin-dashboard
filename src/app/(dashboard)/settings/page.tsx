@@ -68,6 +68,10 @@ export default function SettingsPage() {
   const [ghlInfo, setGhlInfo] = useState<{ connected: boolean; contactCount?: number } | null>(null)
   const [renderUrl, setRenderUrl] = useState('')
   const [waBridgeStatus, setWaBridgeStatus] = useState<'unknown' | 'connected' | 'awaiting_scan' | 'starting'>('unknown')
+  const [waMessage, setWaMessage] = useState('')
+  const [waTo, setWaTo] = useState('32456559189')
+  const [waSending, setWaSending] = useState(false)
+  const [waSendResult, setWaSendResult] = useState<{ ok: boolean; text: string } | null>(null)
 
   useEffect(() => {
     fetch('/api/ghl/status')
@@ -75,7 +79,10 @@ export default function SettingsPage() {
       .then((d) => setGhlInfo({ connected: d.connected, contactCount: d.contactCount }))
       .catch(() => setGhlInfo({ connected: false }))
     const saved = localStorage.getItem('wa_bridge_url')
-    if (saved) setRenderUrl(saved)
+    if (saved) {
+      setRenderUrl(saved)
+      checkBridgeStatus(saved)
+    }
   }, [])
 
   const checkBridgeStatus = async (url: string) => {
@@ -84,6 +91,57 @@ export default function SettingsPage() {
       const d = await r.json()
       setWaBridgeStatus(d.connected ? 'connected' : d.hasQR ? 'awaiting_scan' : 'starting')
     } catch { setWaBridgeStatus('unknown') }
+  }
+
+  const sendWhatsApp = async () => {
+    if (!waMessage.trim() || !renderUrl) return
+    setWaSending(true)
+    setWaSendResult(null)
+    try {
+      const res = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to: waTo, message: waMessage, bridgeUrl: renderUrl }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setWaSendResult({ ok: true, text: 'Bericht verstuurd!' })
+        setWaMessage('')
+      } else {
+        setWaSendResult({ ok: false, text: data.error || 'Verzending mislukt' })
+      }
+    } catch {
+      setWaSendResult({ ok: false, text: 'Kon bridge niet bereiken' })
+    }
+    setWaSending(false)
+    setTimeout(() => setWaSendResult(null), 4000)
+  }
+
+  const sendTestMessage = async () => {
+    if (!renderUrl) return
+    setWaSending(true)
+    setWaSendResult(null)
+    try {
+      const res = await fetch('/api/whatsapp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          to: waTo || '32456559189',
+          message: `Nuttin OS test - ${new Date().toLocaleTimeString('nl-BE')} - WhatsApp verbinding werkt!`,
+          bridgeUrl: renderUrl,
+        }),
+      })
+      const data = await res.json()
+      if (res.ok) {
+        setWaSendResult({ ok: true, text: 'Testbericht verstuurd!' })
+      } else {
+        setWaSendResult({ ok: false, text: data.error || 'Test mislukt' })
+      }
+    } catch {
+      setWaSendResult({ ok: false, text: 'Bridge niet bereikbaar' })
+    }
+    setWaSending(false)
+    setTimeout(() => setWaSendResult(null), 4000)
   }
 
   return (
@@ -162,8 +220,66 @@ export default function SettingsPage() {
               >
                 Status check
               </Button>
+              <Button
+                variant="ghost"
+                size="md"
+                onClick={sendTestMessage}
+                disabled={!renderUrl || waBridgeStatus !== 'connected' || waSending}
+                loading={waSending}
+              >
+                Test sturen
+              </Button>
             </div>
 
+            {/* Send result feedback */}
+            {waSendResult && (
+              <div style={{
+                padding: '8px 12px', borderRadius: 'var(--radius-sm)', marginBottom: '12px',
+                background: waSendResult.ok ? 'var(--accent-green-bg)' : 'var(--accent-red-bg)',
+                color: waSendResult.ok ? 'var(--accent-green-text)' : 'var(--accent-red-text)',
+                fontSize: '12px', fontWeight: 500,
+              }}>
+                {waSendResult.text}
+              </div>
+            )}
+
+            {/* Send message form */}
+            {waBridgeStatus === 'connected' && (
+              <>
+                <CardDivider />
+                <div style={{ fontSize: '11px', fontWeight: 600, marginBottom: '8px', marginTop: '4px', color: 'var(--text-secondary)' }}>Bericht sturen</div>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+                  <input
+                    className="inp"
+                    placeholder="Nummer (bijv. 32456559189)"
+                    value={waTo}
+                    onChange={(e) => setWaTo(e.target.value)}
+                    style={{ width: '160px', fontSize: '12px' }}
+                  />
+                  <input
+                    className="inp"
+                    placeholder="Typ een bericht..."
+                    value={waMessage}
+                    onChange={(e) => setWaMessage(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') sendWhatsApp() }}
+                    style={{ flex: 1, fontSize: '12px' }}
+                  />
+                  <Button
+                    variant="primary"
+                    size="md"
+                    onClick={sendWhatsApp}
+                    disabled={!waMessage.trim() || waSending}
+                    loading={waSending}
+                  >
+                    Stuur
+                  </Button>
+                </div>
+              </>
+            )}
+
+            <CardDivider />
+
+            {/* Render env vars */}
             <div style={{ background: 'var(--bg-tertiary)', borderRadius: 'var(--radius-sm)', padding: '10px 12px', marginBottom: '12px' }}>
               <div style={{ fontSize: '11px', fontWeight: 600, marginBottom: '6px' }}>Render omgevingsvariabelen:</div>
               {[
@@ -181,8 +297,8 @@ export default function SettingsPage() {
               ))}
             </div>
 
-            <CardDivider />
-            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '5px', marginTop: '8px' }}>Commando&apos;s:</div>
+            {/* Commands reference */}
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginBottom: '5px' }}>WhatsApp commando&apos;s:</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
               {[['prioriteiten: 1. X 2. Y','Top 3'],['gewicht: 87.5','Gewicht'],['gegeten: 4 eieren','Maaltijd'],['cash: 350','Inkomen'],['status','Overzicht']].map(([cmd, desc]) => (
                 <div key={cmd} style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '12px' }}>
